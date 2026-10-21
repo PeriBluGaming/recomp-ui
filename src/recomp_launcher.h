@@ -1537,6 +1537,8 @@ struct RecompLauncherCSettings {
     int  render_thread;
     int  present_thread;
     int  frame_generation;
+    /* Used only by hosts declaring assist_fast_forward_divisor > 1. */
+    int  fast_forward_toggle_mode;
 };
 #define RECOMP_LAUNCHER_HAS_ZAPPER_SETTINGS 1
 
@@ -2107,7 +2109,8 @@ typedef struct RecompLauncherCGameInfo {
     const int* assist_default_pad_bind;
     /* Inclusive bounds for Settings.assist_fast_forward_multiplier. Both 0
      * hides the speed slider and leaves fast-forward at the host's fixed
-     * rate. Appended for ABI stability. */
+     * rate. Units are divided by assist_fast_forward_divisor (0/1 = integers).
+     * Appended for ABI stability. */
     int assist_fast_forward_min;
     int assist_fast_forward_max;
 
@@ -2312,7 +2315,11 @@ typedef struct RecompLauncherCGameInfo {
      * action index plus one. The title supplies its defaults through
      * assist_default_pad_bind. Appended for ABI stability. */
     int                assist_direct_pad_bind_action;
+    /* 0/1: historical integer multiplier. 10: tenths (10..50 = 1.0..5.0).
+     * Also exposes hold/toggle choice on the host-shortcut panel. */
+    int                assist_fast_forward_divisor;
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_FRACTIONAL_FAST_FORWARD 1
 #define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
 #define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
 /* Hosts #ifdef on this to stay source-compatible with older recomp-ui that

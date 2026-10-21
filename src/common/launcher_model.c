@@ -541,6 +541,8 @@ void launcher_model_init(LauncherModel* m,
                                       m->assist_fast_forward_min
             ? game->assist_fast_forward_max
             : m->assist_fast_forward_min;
+        m->assist_fast_forward_divisor = game->assist_fast_forward_divisor > 0 &&
+            game->assist_fast_forward_divisor <= 1000 ? game->assist_fast_forward_divisor : 1;
         m->tpak_slots           = clampi(game->tpak_slots, 0, RECOMP_LAUNCHER_MAX_TPAKS);
         m->tpak_inspect_cb      = game->tpak_inspect;
         m->audio_device_labels  = game->audio_device_labels;
@@ -619,6 +621,7 @@ void launcher_model_init(LauncherModel* m,
     m->s.rom_patch_source_path[0] = '\0';
     m->s.rom_patch_sha1[0] = '\0';
     m->s.rom_patch_crc32[0] = '\0';
+    m->s.fast_forward_toggle_mode = m->s.fast_forward_toggle_mode ? 1 : 0;
     m->s.assist_fast_forward_multiplier = clampi(
         m->s.assist_fast_forward_multiplier > 0
             ? m->s.assist_fast_forward_multiplier

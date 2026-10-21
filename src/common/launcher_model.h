@@ -397,6 +397,7 @@ typedef struct {
     const char* credits_text;
     int assist_fast_forward_min;
     int assist_fast_forward_max;
+    int assist_fast_forward_divisor;
     /* Resolved defaults for the assist bindings, seeded from
      * GameInfo.assist_default_{key,pad}_bind when the host supplies them and
      * from the incoming settings otherwise. The Controller page's reset
