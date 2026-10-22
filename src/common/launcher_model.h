@@ -296,6 +296,7 @@ typedef struct {
                                          char* remote_ver, size_t remote_cap);
     bool        setup_prepare_satisfied; // prepare (+ rebuild if chained) succeeded
     char        relaunch_exe[512];       // set when rebuild requests relaunch
+    bool        profile_handoff;
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;

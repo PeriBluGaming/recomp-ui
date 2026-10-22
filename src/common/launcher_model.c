@@ -1425,6 +1425,10 @@ static void run_verify(LauncherModel* m) {
     if (m->disc_verify_cb && m->rom_present) {
         RecompLauncherCDiscVerify dv; memset(&dv, 0, sizeof(dv));
         if (m->disc_verify_cb(m->rom_full, &dv)) {
+            if (dv.profile_handoff) {
+                m->profile_handoff = true;
+                m->action = LNG_ACTION_QUIT;
+            }
             safe_copy(m->verify.serial, sizeof(m->verify.serial), dv.serial);
             safe_copy(m->verify.region, sizeof(m->verify.region), dv.region);
             m->verify.iso_ok  = dv.iso_ok != 0;
