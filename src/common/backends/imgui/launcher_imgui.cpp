@@ -4390,10 +4390,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_toggle_rewind_enabled(m);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip(
-                "Rewind the last few seconds of play (F8, or Select+R3).\n"
-                "Off by default: it keeps whole-machine snapshots in memory,\n"
-                "which costs hundreds of MB and a capture every few frames.\n"
-                "Turning it off frees that immediately.");
+                "Preview earlier moments and continue from one (F8, or Select+R3).\n"
+                "Turning rewind off clears the stored history.");
         }
         /* The two tuning rows only mean anything once it is on. */
         ImGui::BeginDisabled(!rewind_on);
@@ -4403,7 +4401,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip(
                 "How many local rewind snapshots to keep (50 / 100 / 150 / 200).\n"
-                "Each one is a few MB of machine state.\n"
+                "Keeping more history uses more memory.\n"
                 "Takes effect on the next launch.");
         }
         row_label_right("Rewind interval", th, px(SETTINGS_CTRL_W));
@@ -4412,7 +4410,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip(
                 "Frames between rewind snapshots (1 / 4 / 8 / 12 / 15).\n"
-                "FMV still densifies toward 4 when this is sparser.\n"
+                "Smaller intervals give finer control when choosing a moment.\n"
                 "Takes effect on the next launch.");
         }
         ImGui::EndDisabled();
