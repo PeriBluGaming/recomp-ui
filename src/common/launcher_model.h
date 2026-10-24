@@ -308,6 +308,7 @@ typedef struct {
                                          char* remote_ver, size_t remote_cap);
     bool        setup_prepare_satisfied; // prepare (+ rebuild if chained) succeeded
     char        relaunch_exe[512];       // set when rebuild requests relaunch
+    bool        profile_handoff;
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;
@@ -420,6 +421,7 @@ typedef struct {
     const char* credits_text;
     int assist_fast_forward_min;
     int assist_fast_forward_max;
+    int assist_fast_forward_divisor;
     /* Resolved defaults for the assist bindings, seeded from
      * GameInfo.assist_default_{key,pad}_bind when the host supplies them and
      * from the incoming settings otherwise. The Controller page's reset
