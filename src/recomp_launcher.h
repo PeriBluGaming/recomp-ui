@@ -1031,6 +1031,11 @@ typedef struct RecompLauncherCModFeature {
      * never reach a shipped build at all -- when one appears here, this is a
      * local developer build. Appended for ABI stability. */
     int  channel;
+    /* Listed in the dashboard's Quick Mods card (GameInfo.
+     * dashboard_quick_controls): the player's saved choice, else the
+     * manifest's quick flag. See feature_set_quick. Appended for ABI
+     * stability; zero keeps a feature off the card. */
+    int  quick;
 } RecompLauncherCModFeature;
 
 typedef struct RecompLauncherCModOption {
@@ -1208,7 +1213,13 @@ typedef struct RecompLauncherCModProvider {
      * Appended for statically paired source compatibility, not binary sizing. */
     int (*try_commit)(void* ctx, const char* image_path);
     unsigned long long (*preparation_revision)(void* ctx);
+    /* Add a feature to (quick=1) or remove it from (0) the dashboard's Quick
+     * Mods card. Presentation only; activation is unchanged. NULL hides the
+     * "Show in Quick Mods" switch. Appended for ABI stability. */
+    int (*feature_set_quick)(void* ctx, const char* package_id,
+                             const char* feature_id, int quick);
 } RecompLauncherCModProvider;
+#define RECOMP_LAUNCHER_HAS_QUICK_MODS 1
 #define RECOMP_LAUNCHER_HAS_WORKER_MOD_COMMIT 1
 #define RECOMP_LAUNCHER_HAS_PREPARED_MOD_COMMIT 1
 
@@ -2422,7 +2433,21 @@ typedef struct RecompLauncherCGameInfo {
     /* 0/1: historical integer multiplier. 10: tenths (10..50 = 1.0..5.0).
      * Also exposes hold/toggle choice on the host-shortcut panel. */
     int                assist_fast_forward_divisor;
+
+    /* ---- Preselected media, covers and dashboard quick controls -----------
+     * disc_selection_locked: the host already chose and verified the disc
+     * (e.g. a regional package's entry); the launcher offers no other disc
+     * and ignores the remembered one. artwork_root: UTF-8 folder holding one
+     * <disc serial>/ cover folder per disc; NULL = <launcher dir>/artwork.
+     * Borrowed for the launcher's lifetime, never persisted.
+     * dashboard_quick_controls: show Quick Mods and Quick Settings cards next
+     * to the memory cards. All zero keeps the existing launcher. Appended for
+     * ABI stability. */
+    int                disc_selection_locked;
+    const char*        artwork_root;
+    int                dashboard_quick_controls;
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_ARTWORK_GALLERY 1
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
 #define RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG 1
