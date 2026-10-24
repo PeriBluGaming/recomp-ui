@@ -941,10 +941,13 @@ void launcher_model_init(LauncherModel* m,
     {
         char cached_rom[1024];
         const char* seeded_rom = initial_rom;
-        if (lm_load_cached_rom_path(game, initial_rom, cached_rom,
+        if ((!game || !game->disc_selection_locked) && lm_load_cached_rom_path(game, initial_rom, cached_rom,
                                     sizeof(cached_rom)))
             seeded_rom = cached_rom;
         launcher_model_set_rom(m, seeded_rom);
+        m->disc_selection_locked=game && game->disc_selection_locked;
+        m->artwork_root=game?game->artwork_root:NULL;
+        m->dashboard_quick_controls=game && game->dashboard_quick_controls;
     }
 
     // Password/mantra save: read the current one-line password file so the
@@ -1575,6 +1578,7 @@ int launcher_model_rom_report(const LauncherModel* m, char* out, size_t cap) {
 }
 
 void launcher_model_set_rom(LauncherModel* m, const char* path) {
+    if(m->disc_selection_locked && (!path || strcmp(path,m->rom_full)!=0))return;
     if (lm_is_sbi_path(path)) {
         char mounted[sizeof(m->rom_full)] = {0};
         m->setup_error[0] = '\0';
@@ -2429,6 +2433,16 @@ void launcher_model_cycle_screen_kind(LauncherModel* m) {
     int n = 4; (void)screen_kind_vocab(m, &n);
     m->s.screen_kind = (clampi(m->s.screen_kind, 0, n - 1) + 1) % n;
 }
+int launcher_model_screen_kind_count(const LauncherModel* m) {
+    int n=0;(void)screen_kind_vocab(m,&n);return n;
+}
+const char* launcher_model_screen_kind_name(const LauncherModel* m,int index) {
+    int n=0;const char* const* names=screen_kind_vocab(m,&n);
+    return names[clampi(index,0,n-1)];
+}
+void launcher_model_set_screen_kind(LauncherModel* m,int index) {
+    if(m && m->has_screen_kind)m->s.screen_kind=clampi(index,0,launcher_model_screen_kind_count(m)-1);
+}
 
 const char* launcher_model_screen_kind_label(const LauncherModel* m) {
     int n = 4;
@@ -3266,6 +3280,13 @@ bool launcher_model_can_finish_setup(const LauncherModel* m) {
         if (m->netplay_supported && !m->verify.netplay_ok) return false;
     }
     return true;
+}
+
+bool launcher_model_can_open_mods(const LauncherModel* m) {
+    if (!m || m->profile_handoff || m->setup_preparing) return false;
+    if (m->profile && m->profile->verify.mode == 1)
+        return m->rom_present && m->rom_full[0] && m->verify.verdict == 1;
+    return true; /* Preserve non-disc hosts. */
 }
 
 bool launcher_model_can_launch(const LauncherModel* m) {

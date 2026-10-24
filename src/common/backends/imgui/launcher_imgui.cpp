@@ -16,6 +16,8 @@
 #include "launcher_input.h"
 #include "launcher_files.h"
 #include "launcher_directory_url.h"
+#include "launcher_artwork.h"
+#include "launcher_quick_mods.h"
 #include "launcher_debug.h"
 #include "launcher_binds.h"
 #include "launcher_udp_port.h"
@@ -23,6 +25,7 @@
 #include "launcher_system.h"
 #include "launcher_i18n.h"
 #include "launcher_mod_visibility.h"
+#include "launcher_mod_feature_actions.h"
 #include "launcher_mod_preparation.h"
 #include "recomp_moderation.h"   // local ignore/block list (online only)
 #include "consoles/n64/n64_binds.h"   // RUI_N64_FIELD_* for the pad-capture path
@@ -31,6 +34,7 @@
 
 #include "imgui.h"
 #include "launcher_nav.h"
+#include "launcher_mod_button.h"
 #if defined(LNG_SDL3)
   #include "imgui_impl_sdl3.h"
   #define LNG_ImplSDL_InitForOpenGL  ImGui_ImplSDL3_InitForOpenGL
@@ -358,6 +362,18 @@ bool download_icon_button(const char* id, float side, bool enabled,
 // g_th moved to external linkage above the anonymous namespace (see note).
 
 LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard;
+struct ArtworkGallery {
+    std::string serial, error;
+    launcher_artwork::Catalog catalog;
+    std::vector<LauncherTexture> textures;
+    size_t index=0;
+    bool enlarged=false;
+    void clear() {
+        for(auto& t:textures)launcher_texture_free(&t);
+        textures.clear();catalog={};serial.clear();error.clear();index=0;enlarged=false;
+    }
+} g_artwork;
+
 // Optional platform wordmark (SystemProfile.wordmark_image) — rendered in the
 // header instead of the platform text when the asset is present. Absent => text.
 LauncherTexture g_wordmark;
@@ -580,7 +596,9 @@ static void ui_pick(LauncherModel* m, PickRequest req) {
                                             sizeof(g_pick_buf));
             break;
         case PickMode::Folder:
-            r = launcher_try_pick_folder(title, g_pick_buf, sizeof(g_pick_buf));
+            r = launcher_try_pick_folder_in(
+                title, req.start_path.empty() ? nullptr : req.start_path.c_str(),
+                g_pick_buf, sizeof(g_pick_buf));
             break;
         }
         if (r == 1) {
@@ -1968,6 +1986,26 @@ static const SettingsChoice kScaleChoices[LNG_WINDOW_SCALE_MAX] = {
 static const SettingsChoice kFullscreenChoices[] = {
     {0, "Off"}, {1, "Borderless"}, {2, "Exclusive"}
 };
+static void fullscreen_combo(LauncherModel* m,const char* id) {
+    if(ImGui::BeginCombo(id,ui_text(launcher_model_fullscreen_label(m)))) {
+        for(const auto& choice:kFullscreenChoices)
+            if(ImGui::Selectable(ui_text(choice.label),m->s.fullscreen==choice.value))
+                launcher_model_set_fullscreen(m,choice.value);
+        ImGui::EndCombo();
+    }
+}
+static void internal_resolution_combo(LauncherModel* m,const char* id) {
+    if(ImGui::BeginCombo(id,ui_text(launcher_model_internal_resolution_label(m)))) {
+        const int n=launcher_model_internal_resolution_count(m);
+        const int current=launcher_model_internal_resolution_index(m);
+        for(int i=0;i<n;++i) {
+            const char* label=launcher_model_internal_resolution_label_at(m,i);
+            if(label && *label && ImGui::Selectable(ui_text(label),current==i))
+                launcher_model_set_internal_resolution(m,i);
+        }
+        ImGui::EndCombo();
+    }
+}
 static const SettingsChoice kRunAheadChoices[RECOMP_LAUNCHER_RUN_AHEAD_MAX + 1] = {
     {0, "Off"}, {1, "1 frame"}, {2, "2 frames"}, {3, "3 frames"}, {4, "4 frames"}
 };
@@ -1982,9 +2020,9 @@ void row_window_scale(LauncherModel* m, const LauncherTheme& th) {
 }
 
 void row_fullscreen(LauncherModel* m, const LauncherTheme& th) {
-    launcher_model_set_fullscreen(
-        m, settings_combo_row("Fullscreen", th, "##fullscreen",
-                              kFullscreenChoices, 3, m->s.fullscreen));
+    row_label_right("Fullscreen",th,px(SETTINGS_CTRL_W));
+    ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+    fullscreen_combo(m,"##fullscreen");
 }
 
 void row_run_ahead(LauncherModel* m, const LauncherTheme& th) {
@@ -2088,6 +2126,7 @@ const LauncherTexture& verdict_texture(int verdict) {
 // the disc verdict against it and records the choice in Settings.disc_index,
 // which the host persists like any other setting.
 void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw) {
+    if(m->disc_selection_locked)return;
     const int count = launcher_model_disc_count(m);
     if (count <= 1) return;
     const int sel = launcher_model_disc_selected(m);
@@ -2202,6 +2241,97 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
     }
 }
 
+// Assets are selected by the detected disc serial, never by a saved global region.
+// All backends resolve the same portable artwork root next to the entry launcher.
+// GameInfo.artwork_root when the host names one (a regional package keeps its
+// covers beside the shared entry), else <launcher dir>/artwork.
+static std::filesystem::path artwork_home(const LauncherModel* m) {
+    if (m->artwork_root && m->artwork_root[0])
+        return std::filesystem::u8path(m->artwork_root);
+    return launcher_artwork::root(std::filesystem::u8path(asset("")));
+}
+
+void draw_artwork_gallery(LauncherModel* m,float height,float width) {
+    const std::string serial=m->verify.serial;
+    if(serial!=g_artwork.serial) {
+        g_artwork.clear();g_artwork.serial=serial;
+        g_artwork.catalog=launcher_artwork::scan(artwork_home(m),serial);
+        size_t pixels=0;
+        for(const auto& path:g_artwork.catalog.images) {
+            auto t=launcher_texture_load(path.u8string().c_str());
+            if(t.id) {
+                const size_t count=size_t(t.w)*t.h;
+                if(pixels+count>32*1024*1024)launcher_texture_free(&t);
+                else {pixels+=count;g_artwork.textures.push_back(t);}
+            } // malformed/unsupported files are optional; bound total VRAM too
+        }
+    }
+    auto image=[&](const LauncherTexture& t,float maxw,float maxh,const char* id) {
+        const auto size=launcher_artwork::fit(float(t.w),float(t.h),maxw,maxh);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX()+(maxw-size.w)*0.5f);
+        const auto p=ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddImage(tid(t),p,ImVec2(p.x+size.w,p.y+size.h));
+        return ImGui::InvisibleButton(id,ImVec2(size.w,size.h));
+    };
+    const bool custom=!g_artwork.textures.empty();
+    const bool fallback=!custom && g_boxart.id;
+    if(custom || fallback) {
+        const auto& t=custom?g_artwork.textures[g_artwork.index]:g_boxart;
+        const auto origin=ImGui::GetCursorScreenPos();
+        const float gutter=g_artwork.textures.size()>1?ImGui::GetFrameHeight()+px(4):0;
+        ImGui::SetCursorScreenPos(ImVec2(origin.x+gutter,origin.y));
+        if(image(t,std::max(1.0f,width-2*gutter),height,"##enlarge_cover")) {
+            g_artwork.enlarged=true;ImGui::OpenPopup("Cover gallery");
+        }
+        if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",ui_text("Click to enlarge"));
+        const auto after=ImGui::GetCursorScreenPos();
+        if(g_artwork.textures.size()>1) {
+            ImGui::SetCursorScreenPos(ImVec2(origin.x,origin.y+height*0.5f));
+            if(ImGui::ArrowButton("##cover_previous",ImGuiDir_Left))
+                g_artwork.index=launcher_artwork::step(g_artwork.index,g_artwork.textures.size(),-1);
+            ImGui::SetCursorScreenPos(ImVec2(origin.x+width-ImGui::GetFrameHeight(),origin.y+height*0.5f));
+            if(ImGui::ArrowButton("##cover_next",ImGuiDir_Right))
+                g_artwork.index=launcher_artwork::step(g_artwork.index,g_artwork.textures.size(),1);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(origin.x,after.y));
+        if(g_artwork.textures.size()>1)ImGui::TextDisabled("%u / %u",unsigned(g_artwork.index+1),unsigned(g_artwork.textures.size()));
+        ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x*0.8f,ImGui::GetIO().DisplaySize.y*0.85f),ImGuiCond_Appearing);
+        if(ImGui::BeginPopupModal("Cover gallery",&g_artwork.enlarged,ImGuiWindowFlags_NoSavedSettings)) {
+            const auto available=ImGui::GetContentRegionAvail();
+            image(custom?g_artwork.textures[g_artwork.index]:g_boxart,available.x,std::max(1.0f,available.y-ImGui::GetFrameHeightWithSpacing()*2),"##large_cover");
+            if(ImGui::Button(ui_text("Close"))){g_artwork.enlarged=false;ImGui::CloseCurrentPopup();}
+            ImGui::EndPopup();
+        }
+    } else {
+        const LauncherTexture empty{};hero_boxart_centered(empty,height/px(1.0f),width);
+        ImGui::TextDisabled("%s",ui_text("No readable cover images in this folder."));
+    }
+    const bool verified=m->profile && m->profile->verify.mode==1 &&
+        launcher_artwork::supported(serial) && launcher_model_can_open_mods(m);
+    ImGui::BeginDisabled(!verified);
+    if (ImGui::Button(ui_text("Browse Covers"))) {
+        const auto home = artwork_home(m);
+        const auto directory = home / serial;
+        std::error_code ec;
+        std::filesystem::create_directories(directory, ec);
+        g_artwork.error.clear();
+        PickRequest req;
+        req.mode = PickMode::Folder;
+        req.title = ui_text("Browse Covers");
+        if (!ec) req.start_path = directory.u8string();
+        req.on_pick = [home, serial](const char* selected) {
+            if (!selected || !selected[0]) return;
+            if (launcher_artwork::select_folder(home, serial, std::filesystem::u8path(selected)))
+                g_artwork.clear();  // the next frame reloads this disc's saved folder
+            else
+                g_artwork.error = ui_text("The folder is invalid or its selection could not be saved.");
+        };
+        ui_pick(m, std::move(req));
+    }
+    ImGui::EndDisabled();
+    if(!g_artwork.error.empty())ImGui::TextWrapped("%s",g_artwork.error.c_str());
+}
+
 void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = false) {
     if (!begin_panel("game", 0, fill_h)) { end_panel(); return; }
     // No "GAME" eyebrow: the box art itself tells the user this is the game.
@@ -2219,6 +2349,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         // Reserve space for everything under the art: verified line + 2 meta rows
         // + Change ROM, plus the SAVES block when this game has battery SRAM.
         float reserve = px(198.0f);
+        if(disc_verdict)reserve+=px(54.0f);
+        reserve+=ImGui::GetFrameHeightWithSpacing();
         if (disc_verdict) reserve += px(120.0f);          // taller: icon+headline + tracks row
         // Disc Selection label + combo + spacing, for a multi-image title.
         if (launcher_model_disc_count(m) > 1) reserve += px(62.0f);
@@ -2242,7 +2374,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         // Artwork yields to controls. Below a useful thumbnail size, omit it
         // (and its spacer) instead of forcing the metadata below the fold.
         if (art_h >= px(96.0f)) {
-            hero_boxart_centered(g_boxart, art_h, availw);
+            if (disc_verdict) draw_artwork_gallery(m, art_h, availw);
+            else hero_boxart_centered(g_boxart, art_h, availw);
             ImGui::Dummy(ImVec2(0, px(10)));
         }
     }
@@ -2300,6 +2433,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     // machine. Naming the disc number is what keeps those two apart. A
     // single-image title has nothing to number, so it reads "Browse For Disc"
     // ("Browse For ROM" on cartridge consoles, from the profile's rom_noun).
+    if(!m->disc_selection_locked) {
     const int disc_no = launcher_model_disc_count(m) > 1
                             ? launcher_model_disc_number(
                                   m, launcher_model_disc_selected(m))
@@ -2363,6 +2497,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             open_builtin_picker(m, std::move(req));
         }
     }
+
+    } else ImGui::TextDisabled("%s", ui_text("This disc was chosen before the game started. To change it, quit and start again."));
 
     // A required system file the host could not find (GameInfo.bios_name):
     // say so where the player is looking and point at Settings, which owns the
@@ -2737,6 +2873,9 @@ static int dash_card_columns(float availw, float gap, float cardw, int count) {
     return cols;
 }
 
+static void draw_quick_mods(LauncherModel* m,const LauncherTheme& th);
+static void draw_quick_settings(LauncherModel* m,const LauncherTheme& th);
+
 void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const SaveKind kind = prof ? prof->save.kind : SAVE_NONE;
@@ -2747,22 +2886,30 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
         const int slots = (prof->save.slots > 0 && prof->save.slots <= 2) ? prof->save.slots : 2;
         const float gap = px(th->spacing_sm);
         const float avail = ImGui::GetContentRegionAvail().x;
-        const float cw = dash_card_width(avail, gap, slots);
-        const int cols = dash_card_columns(avail, gap, cw, slots);
+        const int cards=slots+(m->dashboard_quick_controls?2:0);
+        const float cw = dash_card_width(avail, gap, cards);
+        const int cols = dash_card_columns(avail, gap, cw, cards);
         // Multitap fill-height: slot cards take the reserved band under the
         // controller stack. 2P / narrow leave g_save_fill_h false and hug.
         const float fill_h = ImGui::GetContentRegionAvail().y;
         const bool do_fill = g_save_fill_h && fill_h > px(180.0f);
         g_save_fill_h = do_fill;   // draw_memcard_slot reads this for the bottom slack
-        for (int slot = 0; slot < slots; ++slot) {
+        for (int slot = 0; slot < cards; ++slot) {
             if (slot % cols) ImGui::SameLine(0, gap);
             else if (slot) ImGui::Dummy(ImVec2(0, gap));
             char cid[16]; snprintf(cid, sizeof(cid), "mcc%d", slot);
             char pid[16]; snprintf(pid, sizeof(pid), "mcp%d", slot);
-            begin_container(cid, ImVec2(cw, do_fill ? fill_h : 0.0f),
-                            do_fill ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
-                if (begin_panel(pid, cw, do_fill, do_fill))
-                    draw_memcard_slot(m, *th, slot);
+            const bool quick=slot>=slots;
+            const float height=quick?px(250):do_fill?fill_h:0.0f;
+            begin_container(cid, ImVec2(cw, height),
+                            quick || do_fill ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
+                // The container is already sized in physical pixels. A zero
+                // inner width fills it without applying DPI scaling twice.
+                if (begin_panel(pid, 0, quick || do_fill, quick?false:do_fill)) {
+                    if(slot<slots)draw_memcard_slot(m,*th,slot);
+                    else if(slot==slots)draw_quick_mods(m,*th);
+                    else draw_quick_settings(m,*th);
+                }
                 end_panel();
             end_container();
         }
@@ -4141,18 +4288,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
          * entries are not something to click through. */
         row_label_right("Internal resolution", th, px(SETTINGS_CTRL_W));
         ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
-        if (ImGui::BeginCombo("##internal_resolution",
-                              ui_text(launcher_model_internal_resolution_label(m)))) {
-            const int n = launcher_model_internal_resolution_count(m);
-            const int cur = launcher_model_internal_resolution_index(m);
-            for (int i = 0; i < n; ++i) {
-                const char* lbl = launcher_model_internal_resolution_label_at(m, i);
-                if (!lbl || !lbl[0]) continue;
-                if (ImGui::Selectable(ui_text(lbl), cur == i))
-                    launcher_model_set_internal_resolution(m, i);
-            }
-            ImGui::EndCombo();
-        }
+        internal_resolution_combo(m,"##internal_resolution");
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip("%s", ui_text(
                 "Renders the game at this height, not an upscale.\n"
@@ -11828,6 +11964,17 @@ struct ModFeatureListItem {
     RecompLauncherCModFeature feature;
 };
 
+// One feature switch for the Mods page and the dashboard's Quick Mods card.
+static void change_mod_feature(LauncherModel* m, const RecompLauncherCModFeature& feature,
+                               bool enabled) {
+    if (!launcher_mod_enable_feature(m, &feature, enabled ? 1 : 0))
+        mod_note_error(m);
+    else if (enabled)
+        prompt_missing_mod_resources(m, feature.package_id, feature.id);
+    if (m->has_bios && m->bios_verify_for_rom_cb)
+        launcher_model_refresh_bios_status(m);
+}
+
 static bool mod_feature_less(const ModFeatureListItem& lhs,
                              const ModFeatureListItem& rhs) {
     const int group = std::strcmp(lhs.feature.group, rhs.feature.group);
@@ -12182,16 +12329,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
 
                     bool enabled = feature.enabled != 0;
                     if (ImGui::Checkbox("##enabled", &enabled)) {
-                        if (!mods->feature_enable(
-                                mods->ctx, feature.package_id, feature.id,
-                                enabled ? 1 : 0)) {
-                            mod_note_error(m);
-                        } else if (enabled) {
-                            prompt_missing_mod_resources(
-                                m, feature.package_id, feature.id);
-                        }
-                        if (m->has_bios && m->bios_verify_for_rom_cb)
-                            launcher_model_refresh_bios_status(m);
+                        change_mod_feature(m, feature, enabled);
                     }
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s %s\n%s%s%s",
@@ -12254,6 +12392,13 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
             mods->feature_get(mods->ctx, m->mod_selected, &feature) &&
             launcher_mod_feature_listed(mods, &feature)) {
             ImGui::TextColored(col(th.accent2), "%s", feature.name);
+            if (m->dashboard_quick_controls && mods->feature_set_quick) {
+                bool quick = feature.quick != 0;
+                if (ImGui::Checkbox(ui_text("Show in Quick Mods"), &quick) &&
+                    !mods->feature_set_quick(mods->ctx, feature.package_id,
+                                             feature.id, quick ? 1 : 0))
+                    mod_note_error(m);
+            }
             if (const char* channel_tag = mod_channel_tag(feature.channel)) {
                 ImGui::SameLine();
                 ImGui::TextColored(col(mod_channel_color(feature.channel, th)),
@@ -12478,6 +12623,71 @@ static void draw_rom_patch(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TextColored(col(th.accent), "%s", m->rom_patch_status);
     }
     ImGui::EndChild();
+}
+
+static void draw_quick_mods(LauncherModel* m,const LauncherTheme& th) {
+    eyebrow("Quick Mods");
+    const auto* mods=m?m->mods:nullptr;
+    if(!mods || !mods->feature_count || !mods->feature_get || !mods->feature_enable)return;
+    std::vector<ModFeatureListItem> features;
+    for(int i=0,n=mods->feature_count(mods->ctx);i<n;++i) {
+        ModFeatureListItem item{};item.index=i;
+        if(mods->feature_get(mods->ctx,i,&item.feature) && launcher_quick_listed(mods,&item.feature))features.push_back(item);
+    }
+    std::stable_sort(features.begin(),features.end(),mod_feature_less);
+    ImGui::BeginDisabled(!launcher_model_can_open_mods(m));
+    if(ImGui::BeginChild("##quick_mod_list",ImVec2(0,0))) {
+        for(const auto& item:features) {
+            const auto& feature=item.feature;
+            ImGui::PushID(feature.package_id);ImGui::PushID(feature.id);
+            bool enabled=feature.enabled!=0;
+            bool changed=ImGui::Checkbox("##enabled",&enabled);
+            bool hovered=ImGui::IsItemHovered();
+            ImGui::SameLine();ImGui::PushTextWrapPos(0);
+            ImGui::TextUnformatted(feature.name);ImGui::PopTextWrapPos();
+            if(ImGui::IsItemClicked()){enabled=!enabled;changed=true;}
+            hovered=hovered || ImGui::IsItemHovered();
+            if(changed)change_mod_feature(m,feature,enabled);
+            if(hovered && (feature.has_error || m->mod_status[0]))
+                ImGui::SetTooltip("%s",feature.has_error?feature.status:m->mod_status);
+            ImGui::PopID();ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();ImGui::EndDisabled();
+    (void)th;
+}
+
+static void draw_quick_settings(LauncherModel* m,const LauncherTheme& th) {
+    eyebrow("Quick Settings");
+    if(m->has_vsync) {
+        bool on=m->s.vsync!=RECOMP_LAUNCHER_VSYNC_OFF;
+        if(ImGui::Checkbox(ui_text("VSync"),&on))
+            launcher_model_set_vsync(m,on?RECOMP_LAUNCHER_VSYNC_ON:RECOMP_LAUNCHER_VSYNC_OFF);
+    }
+    if(launcher_model_internal_resolution_offered(m)) {
+        ImGui::TextUnformatted(ui_text("Internal resolution"));
+        ImGui::SetNextItemWidth(-1);
+        internal_resolution_combo(m,"##quick_resolution");
+    }
+    ImGui::TextUnformatted(ui_text("Screen Mode"));
+    ImGui::SetNextItemWidth(-1);
+    fullscreen_combo(m,"##quick_screen_mode");
+    bool fullscreen=m->s.fullscreen!=0;
+    if(ImGui::Checkbox(ui_text("Fullscreen"),&fullscreen))launcher_model_toggle_fullscreen(m);
+    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",ui_text("Uses the same Off / Borderless / Exclusive setting. Changes apply when the game starts."));
+    if(m->has_screen_kind) {
+        ImGui::TextUnformatted(ui_text("Screen Model"));
+        ImGui::SetNextItemWidth(-1);
+        if(ImGui::BeginCombo("##quick_screen_model",ui_text(launcher_model_screen_kind_label(m)))) {
+            for(int i=0;i<launcher_model_screen_kind_count(m);++i) {
+                const bool selected=m->s.screen_kind==i;
+                if(ImGui::Selectable(ui_text(launcher_model_screen_kind_name(m,i)),selected))launcher_model_set_screen_kind(m,i);
+                if(selected)ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    (void)th;
 }
 
 void draw_mods(LauncherModel* m, const LauncherTheme& th) {
@@ -14178,7 +14388,8 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
                 launcher_model_set_view(m, LNG_VIEW_SETTINGS);
             if (m->mods) {
                 ImGui::SameLine(0, gap);
-                if (ImGui::Button(ui_text("Mods"), ImVec2(w, px(34))))
+                if (rui_mods_button(launcher_model_can_open_mods(m),
+                                    ui_text("Mods"), ImVec2(w, px(34))))
                     launcher_model_set_view(m, LNG_VIEW_MODS);
             }
             if (m->has_assist_tools) {
@@ -15074,6 +15285,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_boot_timing_mark("rui:action_requested");
     launcher_input_shutdown();
     launcher_boot_timing_mark("rui:input_closed");
+    g_artwork.clear();
     launcher_texture_free(&g_boxart);
     launcher_texture_free(&g_pad);
     launcher_texture_free(&g_pad_analog);

@@ -306,6 +306,47 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-launcher-discs-test>
                 "${CMAKE_CURRENT_BINARY_DIR}")
 
+    add_executable(recomp-ui-launcher-mod-gate-test
+        tests/launcher_mod_gate_test.c src/common/crc32.c src/common/sha1.c
+        src/common/launcher_mod_visibility.c
+        src/common/sha256.c src/common/ips_patch.c src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-mod-gate-test PRIVATE src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-mod-gate-test PRIVATE ${RUI_SDL_TARGET})
+    # Keep assertions active in Release, matching the intended policy fixture.
+    if(MSVC)
+        target_compile_options(recomp-ui-launcher-mod-gate-test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(recomp-ui-launcher-mod-gate-test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME recomp-ui-launcher-mod-gate COMMAND recomp-ui-launcher-mod-gate-test)
+
+    add_executable(recomp-ui-launcher-mod-button-test
+        tests/launcher_mod_button_test.cpp
+        src/third_party/imgui/imgui.cpp src/third_party/imgui/imgui_draw.cpp
+        src/third_party/imgui/imgui_tables.cpp src/third_party/imgui/imgui_widgets.cpp)
+    target_include_directories(recomp-ui-launcher-mod-button-test PRIVATE
+        src/common src/third_party/imgui)
+    if(MSVC)
+        target_compile_options(recomp-ui-launcher-mod-button-test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(recomp-ui-launcher-mod-button-test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME recomp-ui-launcher-mod-button COMMAND recomp-ui-launcher-mod-button-test)
+
+    # Cover folders: per-disc preference, relocation, Unicode paths, invalid
+    # and empty folders, ordering and aspect fit. Writes only under the test dir.
+    add_executable(recomp-ui-launcher-artwork-folder-test tests/launcher_artwork_folder_test.cpp)
+    target_include_directories(recomp-ui-launcher-artwork-folder-test PRIVATE src/common)
+    target_compile_features(recomp-ui-launcher-artwork-folder-test PRIVATE cxx_std_17)
+    if(MSVC)
+        target_compile_options(recomp-ui-launcher-artwork-folder-test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(recomp-ui-launcher-artwork-folder-test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME recomp-ui-launcher-artwork-folder
+        COMMAND recomp-ui-launcher-artwork-folder-test
+                "${CMAKE_CURRENT_BINARY_DIR}/artwork-folder-test-$<CONFIG>")
+
     # Renderer / VSync as enumerable lists rather than cycle buttons. Same
     # include-the-TU shape as the discs test above.
     add_executable(recomp-ui-launcher-video-pick-test

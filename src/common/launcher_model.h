@@ -560,6 +560,11 @@ typedef struct {
     // See VerifyResult above. Untouched (all-zero) for verify.mode==0 systems
     // (SNES) — panels branch on m->profile->verify.mode, never on this alone.
     VerifyResult verify;
+    // From GameInfo (RECOMP_LAUNCHER_HAS_ARTWORK_GALLERY): the host chose the
+    // disc already; cover folder root (borrowed, NULL = default); Quick cards.
+    bool disc_selection_locked;
+    const char* artwork_root;
+    bool dashboard_quick_controls;
 
     // ---- editable settings (working copy of the C ABI struct) ----
     RecompLauncherCSettings s;
@@ -987,6 +992,9 @@ void launcher_model_toggle_perspective_texturing(LauncherModel* m);
 // correction rounds back to the native pixel and has no visible effect.
 bool launcher_model_geometry_correction_inert(const LauncherModel* m);
 void launcher_model_cycle_screen_kind(LauncherModel* m);       // Raw/CRT/Composite/Trinitron
+int launcher_model_screen_kind_count(const LauncherModel* m);
+const char* launcher_model_screen_kind_name(const LauncherModel* m,int index);
+void launcher_model_set_screen_kind(LauncherModel* m,int index);
 const char* launcher_model_screen_kind_label(const LauncherModel* m);
 void launcher_model_toggle_scanlines(LauncherModel* m);
 void launcher_model_set_scanline_strength_pct(LauncherModel* m, int pct); // clamps 1..100
@@ -1216,6 +1224,8 @@ void launcher_model_setup_start_bios_regen(LauncherModel* m);
 bool launcher_model_can_finish_setup(const LauncherModel* m);
 // True when BIOS (if required) and ROM/disc are ready to launch (incl. fingerprint).
 bool launcher_model_can_launch(const LauncherModel* m);
+// Dashboard Mods entry requires a fully verified disc and no regional handoff.
+bool launcher_model_can_open_mods(const LauncherModel* m);
 // True when the mounted disc is OK for online (TOC/cue policy + content).
 // Non-disc games (verify.mode!=1) always return true when netplay is supported.
 bool launcher_model_netplay_disc_ok(const LauncherModel* m);
