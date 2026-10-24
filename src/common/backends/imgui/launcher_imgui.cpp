@@ -72,6 +72,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cerrno>
 #include <cctype>
 #include <cstdio>
@@ -1881,6 +1882,22 @@ void row_label(const char* text, const LauncherTheme& th, float col_w = 0.0f) {
 void row_label_right(const char* text, const LauncherTheme& th, float ctrl_w) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(col(th.text_muted), "%s", ui_text(text));
+    // Label help also covers compound widgets (steppers and device pickers).
+    if (ImGui::IsItemHovered()) {
+        const char* help = nullptr;
+        if (!strcmp(text, "Volume")) help = "Adjust output volume without changing game speed.";
+        else if (!strcmp(text, "Sample rate")) help = "Choose the host audio output sample rate; game speed is unchanged.";
+        else if (!strcmp(text, "High-quality SPU")) help = "Enhanced audio processing where supported; audible differences can be subtle.";
+        else if (!strcmp(text, "VSync")) help = "Synchronize presentation with the display to reduce tearing. This does not increase game simulation speed.";
+        else if (!strcmp(text, "Renderer")) help = "Choose the graphics backend. OpenGL is needed for external texture replacements.";
+        else if (!strcmp(text, "Internal resolution")) help = "Choose the resolution used to draw the game; higher settings require more GPU work.";
+        else if (!strcmp(text, "Dynamic resolution")) help = "Allow internal resolution to decrease when the GPU cannot keep up.";
+        else if (!strcmp(text, "Lowest resolution")) help = "Lowest resolution permitted by dynamic resolution.";
+        else if (!strcmp(text, "Antialiasing")) help = "Smooth polygon edges; higher quality can require more GPU work.";
+        else if (!strcmp(text, "FMV filtering")) help = "Choose how original video frames are scaled. This does not add video detail.";
+        else if (!strcmp(text, "Language")) help = "Select the launcher interface language. The game's own language may be selected separately.";
+        if (help) ImGui::SetTooltip("%s", ui_text(help));
+    }
     ImGui::SameLine(0.0f, 0.0f);
     float shift = ImGui::GetContentRegionAvail().x - ctrl_w;
     const float min_gap = px(th.spacing_md);
@@ -4495,10 +4512,12 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Button(ui_text(launcher_model_freq_label(m)),
                           ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_freq(m);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Choose the host audio output sample rate. Game and music speed stay unchanged.");
     }
     row_label_right("Volume", th, px(SETTINGS_CTRL_W));
     int dv = 0; stepper("vol", m->s.volume, "%", &dv, px(SETTINGS_CTRL_W));
     if (dv) launcher_model_volume_delta(m, dv);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adjust the game's output volume.");
 
     // Output-device pick (host-enumerated names; N64/RT64 hosts) — "(system
     // default)" first, committing "" so an unplugged device degrades sanely.
@@ -4525,6 +4544,7 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label_right("High-quality SPU", th, cb);
         bool hq = m->s.spu_hq != 0;
         if (ImGui::Checkbox("##spuhq", &hq)) launcher_model_toggle_spu_hq(m);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enhance supported SPU voices after verification. CD/XA movie audio immediately uses the full original mix; other unsupported mixes fall back after verification. No extra delay is added.");
     }
 
     // NOTE: analog deadzone is NOT here — it belongs to the input device, so it
@@ -5372,6 +5392,38 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
         ImGui::TextColored(col(th.warn), "Listening... (Esc cancels, Backspace unbinds)");
 }
 
+static void draw_fractional_fast_forward(LauncherModel* m) {
+    if (m->assist_fast_forward_divisor <= 1) return;
+    ImGui::SeparatorText("FAST FORWARD");
+    int units = m->s.assist_fast_forward_multiplier;
+    float speed = (float)units / m->assist_fast_forward_divisor;
+    const float lo = (float)m->assist_fast_forward_min / m->assist_fast_forward_divisor;
+    const float hi = (float)m->assist_fast_forward_max / m->assist_fast_forward_divisor;
+    ImGui::SetNextItemWidth(px(220));
+    bool changed = ImGui::SliderFloat("##ff_slider", &speed, lo, hi, "%.1fx");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Set fast-forward speed in 0.1 steps. Music and sound also speed up. Normal play remains at the original speed.");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(px(120));
+    changed |= ImGui::InputFloat("Speed", &speed, 0.1f, 1.0f, "%.1f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enter a target speed from 1.0x to 5.0x. Actual speed depends on your PC.");
+    if (changed && std::isfinite(speed)) {
+        speed = std::max(lo, std::min(hi, speed));
+        m->s.assist_fast_forward_multiplier = (int)std::lround(speed * m->assist_fast_forward_divisor);
+    }
+    for (int preset = 2; preset <= 5; ++preset) {
+        if (preset > 2) ImGui::SameLine();
+        char label[8]; snprintf(label, sizeof(label), "%dx", preset);
+        if (ImGui::Button(label)) m->s.assist_fast_forward_multiplier = preset * m->assist_fast_forward_divisor;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select this fast-forward speed preset.");
+    }
+    int mode = m->s.fast_forward_toggle_mode ? 1 : 0;
+    if (ImGui::Combo("Shortcut mode", &mode, "Hold\0Toggle\0"))
+        m->s.fast_forward_toggle_mode = mode;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold: fast-forward while pressed. Toggle: press once to start and again to stop.");
+    ImGui::TextWrapped("Target speed: 1.0x to 5.0x in 0.1 steps. Actual speed depends on hardware. "
+                       "Fast-forward Toggle always switches on/off independently.");
+}
+
 void draw_controller_assist_shortcuts(LauncherModel* m,
                                       const LauncherTheme& th) {
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
@@ -5382,6 +5434,7 @@ void draw_controller_assist_shortcuts(LauncherModel* m,
                        m->has_assist_tools
                            ? "(global; requires Assist Tools)"
                            : "(keyboard and controller)");
+    draw_fractional_fast_forward(m);
     const bool pad_col = assist_pad_column_available(m);
     if (ImGui::BeginTable("controller_assist_binds", pad_col ? 3 : 2,
                           ImGuiTableFlags_SizingStretchProp |
@@ -5455,7 +5508,8 @@ void draw_assist_tools(LauncherModel* m, const LauncherTheme& th) {
     // Fast-forward speed. Only hosts that publish a range get the slider; a
     // host that leaves the bounds unset keeps its own fixed rate and the
     // control stays absent rather than dead.
-    if (m->assist_fast_forward_max > m->assist_fast_forward_min) {
+    if (m->assist_fast_forward_divisor <= 1 &&
+        m->assist_fast_forward_max > m->assist_fast_forward_min) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
     ImGui::TextUnformatted(ui_text("FAST-FORWARD SPEED"));
@@ -12140,9 +12194,11 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                             launcher_model_refresh_bios_status(m);
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s %s",
+                        ImGui::SetTooltip("%s %s\n%s%s%s",
                                           enabled ? ui_text("Disable") : ui_text("Enable"),
-                                          feature.name);
+                                          feature.name, feature.description,
+                                          feature.status[0] ? "\n" : "",
+                                          feature.status);
                     ImGui::SameLine();
                     if (feature.has_error) {
                         ImGui::TextColored(col(th.warn), "!");
@@ -12282,7 +12338,9 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                             ImGui::TextWrapped("%s", resource.description);
                         ImGui::PushTextWrapPos(0.0f);
                         ImGui::TextColored(
+                            resource.verified && std::strcmp(resource.file_description,"HD texture pack")==0 ? ImVec4(0.25f,0.80f,0.35f,1.0f) :
                             resource.verified ? col(th.accent2) :
+                                (std::strncmp(resource.status,"Not installed",13)==0 || std::strncmp(resource.status,"No texture pack installed",25)==0) ? col(th.text_muted) :
                                 !resource.required && !resource.path[0] ? col(th.text_muted) : col(th.warn),
                             "%s", resource.status[0]
                                       ? resource.status : ui_text("Not selected"));
@@ -12298,6 +12356,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                         const bool directory_resource =
                             mod_resource_is_directory(resource);
                         if (ImGui::Button(
+                                std::strcmp(resource.file_description,"HD texture pack")==0 ? "Select Texture Pack Folder" :
                                 resource.path[0]
                                     ? (directory_resource ? ui_text("Change folder")
                                                           : ui_text("Change file"))

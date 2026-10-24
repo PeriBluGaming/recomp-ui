@@ -1573,6 +1573,8 @@ struct RecompLauncherCSettings {
      * additively; a zero-initialized host reads as unset. */
     int  quality_preset;
     int  quality_base;
+    /* Used only by hosts declaring assist_fast_forward_divisor > 1. */
+    int  fast_forward_toggle_mode;
 };
 #define RECOMP_LAUNCHER_HAS_ZAPPER_SETTINGS 1
 
@@ -1621,6 +1623,7 @@ typedef struct RecompLauncherCDiscVerify {
     char disc_fp[65];      // lowercase hex SHA-256 TOC fingerprint; "" if none
     char netplay_detail[160];
     int sbi_status; // RECOMP_SBI_*; zero means no requirement recorded by host.
+    int profile_handoff; // host verified another shipped backend; close without committing edits
 } RecompLauncherCDiscVerify;
 
 /* Host BIOS check for the first-run setup wizard (has_bios games). */
@@ -2160,7 +2163,8 @@ typedef struct RecompLauncherCGameInfo {
     const int* assist_default_pad_bind;
     /* Inclusive bounds for Settings.assist_fast_forward_multiplier. Both 0
      * hides the speed slider and leaves fast-forward at the host's fixed
-     * rate. Appended for ABI stability. */
+     * rate. Units are divided by assist_fast_forward_divisor (0/1 = integers).
+     * Appended for ABI stability. */
     int assist_fast_forward_min;
     int assist_fast_forward_max;
 
@@ -2414,10 +2418,15 @@ typedef struct RecompLauncherCGameInfo {
     int (*rom_describe)(void* ctx, const uint8_t* image, size_t len,
                         char* out, size_t out_size);
     void*              rom_describe_ctx;
+
+    /* 0/1: historical integer multiplier. 10: tenths (10..50 = 1.0..5.0).
+     * Also exposes hold/toggle choice on the host-shortcut panel. */
+    int                assist_fast_forward_divisor;
 } RecompLauncherCGameInfo;
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
 #define RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG 1
+#define RECOMP_LAUNCHER_HAS_FRACTIONAL_FAST_FORWARD 1
 #define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
 #define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
 /* Hosts #ifdef on this to stay source-compatible with older recomp-ui that
@@ -2437,6 +2446,7 @@ typedef struct RecompLauncherCGameInfo {
 #define RECOMP_LAUNCHER_RESULT_QUIT         1
 #define RECOMP_LAUNCHER_RESULT_UNAVAILABLE  2
 #define RECOMP_LAUNCHER_RESULT_RELAUNCH     3
+#define RECOMP_LAUNCHER_RESULT_PROFILE      4
 
 // *io always comes back carrying the player's edits, whichever way the
 // launcher closed -- a setting changed and then dismissed is still a setting
