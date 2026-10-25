@@ -395,21 +395,37 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-render-pipeline
         COMMAND $<TARGET_FILE:recomp-ui-launcher-render-pipeline-test>)
 
-    # Graphics presets: host-applied values, Custom on a governed edit,
-    # Re-detect, offered mask.
-    add_executable(recomp-ui-launcher-quality-preset-test
-        tests/launcher_quality_preset_test.c
+    # VSync row overridden by an enabled mod that forces vsync off
+    # (RecompLauncherCModFeature.forces_vsync_off).
+    add_executable(recomp-ui-launcher-vsync-override-test
+        tests/launcher_vsync_override_test.c
         src/common/crc32.c
         src/common/sha1.c
         src/common/sha256.c
         src/common/ips_patch.c
         src/consoles/psx/memcard_format.c)
-    target_include_directories(recomp-ui-launcher-quality-preset-test PRIVATE
+    target_include_directories(recomp-ui-launcher-vsync-override-test PRIVATE
         src src/common src/consoles/psx)
-    target_link_libraries(recomp-ui-launcher-quality-preset-test PRIVATE ${RUI_SDL_TARGET})
+    target_link_libraries(recomp-ui-launcher-vsync-override-test PRIVATE ${RUI_SDL_TARGET})
     add_test(
-        NAME recomp-ui-launcher-quality-preset
-        COMMAND $<TARGET_FILE:recomp-ui-launcher-quality-preset-test>)
+        NAME recomp-ui-launcher-vsync-override
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-vsync-override-test>)
+
+    # Every label a cycle-button Settings row can show, so the row sizes to the
+    # widest (docs/SETTINGS_STANDARD.md: controls sized to their labels).
+    add_executable(recomp-ui-launcher-cycle-labels-test
+        tests/launcher_cycle_labels_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-cycle-labels-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-cycle-labels-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-cycle-labels
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-cycle-labels-test>)
 
     # First-run wizard: staging a retail BIOS that has no linked backend.
     # Same include-the-TU shape as the discs test above.

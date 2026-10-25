@@ -1891,8 +1891,8 @@ void row_label(const char* text, const LauncherTheme& th, float col_w = 0.0f) {
  * a card whose rows all use the same control width comes out flush on BOTH
  * sides, which is the grid the col_w pass was trying to build.
  *
- * `ctrl_w` is the width the caller is about to draw: px(SETTINGS_CTRL_W) for
- * the shared button/dropdown width, ImGui::GetFrameHeight() for a checkbox
+ * `ctrl_w` is the width the caller is about to draw: settings_fit_w's answer
+ * for a button or dropdown, ImGui::GetFrameHeight() for a checkbox
  * (they are square), or a bespoke width for a row that needs one. A label too
  * long to leave room keeps a minimum gap and lets its control run wide rather
  * than colliding with the text.
@@ -1923,12 +1923,64 @@ void row_label_right(const char* text, const LauncherTheme& th, float ctrl_w) {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + shift);
 }
 
-/* One width for every button and dropdown in the Display and Audio cards, so
- * right-anchoring also lines their left edges up. Wide enough for the longest
- * value any of them shows ("Borderless", "Adaptive", "2 frames", "32000 Hz").
- * Rows whose value cannot fit -- a screen model, a file path -- pass their own
- * width to row_label_right instead. */
+/* The narrowest a settings button or dropdown gets, shared so that the rows
+ * whose values are short ("Borderless", "Adaptive", "2 frames") line their
+ * left edges up under right-anchoring. A row whose widest value needs more
+ * room takes it (settings_fit_w), so no row hard-codes a wider constant of its
+ * own and no value is clipped. */
 #define SETTINGS_CTRL_W 150.0f
+
+/*
+ * The width a settings control needs to show `widest_text` (the widest of
+ * every value it can show, already measured with CalcTextSize) whole: the text
+ * plus the frame padding on both sides and, for a dropdown, the arrow button
+ * (as wide as the frame is high). Never narrower than SETTINGS_CTRL_W, and
+ * never wider than the card leaves beside the row's label and
+ * row_label_right's minimum gap -- so a long value can grow the control but
+ * never push it past the card. Call it at the start of the row, before
+ * row_label_right, while the cursor is still at the card's left edge.
+ * (docs/SETTINGS_STANDARD.md: controls sized to their labels, every console.)
+ */
+float settings_fit_w(const char* row_label, const LauncherTheme& th,
+                     float widest_text, bool combo) {
+    const ImGuiStyle& st = ImGui::GetStyle();
+    float w = widest_text + st.FramePadding.x * 2.0f +
+              (combo ? ImGui::GetFrameHeight() : 0.0f);
+    const float floor_w = px(SETTINGS_CTRL_W);
+    if (w < floor_w) w = floor_w;
+    const float room = ImGui::GetContentRegionAvail().x -
+                       ImGui::CalcTextSize(ui_text(row_label)).x - px(th.spacing_md);
+    if (w > room) w = room > floor_w ? room : floor_w;
+    return w;
+}
+
+/* The widest of a list of labels, as the control draws them (ui_text). */
+template <typename LabelAt>
+float settings_widest_text(int count, LabelAt label_at) {
+    float widest = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        const char* l = label_at(i);
+        if (!l || !*l) continue;
+        const float w = ImGui::CalcTextSize(ui_text(l)).x;
+        if (w > widest) widest = w;
+    }
+    return widest;
+}
+
+/* A cycle button's width: every label its cycle can show
+ * (launcher_model_each_cycle_label), measured. */
+static void settings_measure_label(const char* label, void* ctx) {
+    float* widest = (float*)ctx;
+    const float w = ImGui::CalcTextSize(ui_text(label)).x;
+    if (w > *widest) *widest = w;
+}
+float settings_cycle_w(const LauncherModel* m, const char* row_label,
+                       const LauncherTheme& th, void (*cycle)(LauncherModel*),
+                       const char* (*label)(const LauncherModel*)) {
+    float widest = 0.0f;
+    (void)launcher_model_each_cycle_label(m, cycle, label, settings_measure_label, &widest);
+    return settings_fit_w(row_label, th, widest, false);
+}
 
 /*
  * False while the window is too narrow to run DISPLAY and AUDIO side by side,
@@ -1965,8 +2017,10 @@ int settings_combo_row(const char* label, const LauncherTheme& th,
     for (int i = 0; i < count; ++i)
         if (choices[i].value == current) { current_label = choices[i].label; break; }
 
-    row_label_right(label, th, px(SETTINGS_CTRL_W));
-    ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+    const float w = settings_fit_w(label, th, settings_widest_text(count,
+        [&](int i) { return choices[i].label; }), true);
+    row_label_right(label, th, w);
+    ImGui::SetNextItemWidth(w);
     int picked = current;
     if (ImGui::BeginCombo(id, ui_text(current_label))) {
         for (int i = 0; i < count; ++i)
@@ -2020,8 +2074,11 @@ void row_window_scale(LauncherModel* m, const LauncherTheme& th) {
 }
 
 void row_fullscreen(LauncherModel* m, const LauncherTheme& th) {
-    row_label_right("Fullscreen",th,px(SETTINGS_CTRL_W));
-    ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+    const int n = (int)(sizeof kFullscreenChoices / sizeof kFullscreenChoices[0]);
+    const float w = settings_fit_w("Fullscreen", th, settings_widest_text(n,
+        [](int i) { return kFullscreenChoices[i].label; }), true);
+    row_label_right("Fullscreen",th,w);
+    ImGui::SetNextItemWidth(w);
     fullscreen_combo(m,"##fullscreen");
 }
 
@@ -3858,23 +3915,24 @@ static bool has_display_aspect_row(const LauncherModel* m) {
 
 static void draw_aspect_row(LauncherModel* m, const LauncherTheme& th) {
     if (!has_display_aspect_row(m)) return;
-    /* px(180) rather than the shared column, for the Screen layout reason:
-     * both the label and the value come from the HOST, not from a vocabulary
-     * this file owns, and a button does not elide.
+    /* Both the label and the values come from the HOST, and a button does
+     * not elide, so the button is as wide as the widest value it cycles
+     * through (settings_cycle_w).
      *
      * The EXPERIMENTAL tag sits AFTER the button on the same line, so it has
      * to be inside the width reserved here -- right-anchoring aligns the right
      * edge of what it is told about, and a tag left out of the sum hangs off
      * the card. */
-    float ctrl_w = px(180);
+    const char* row = m->aspect_setting_label && m->aspect_setting_label[0]
+                          ? m->aspect_setting_label : "Aspect ratio";
+    const float btn_w = settings_cycle_w(m, row, th, launcher_model_cycle_aspect,
+                                         launcher_model_aspect_label);
+    float ctrl_w = btn_w;
     if (m->aspect_experimental)
         ctrl_w += px(8) + ImGui::CalcTextSize("EXPERIMENTAL").x;
-    row_label_right(m->aspect_setting_label && m->aspect_setting_label[0]
-                        ? m->aspect_setting_label
-                        : "Aspect ratio",
-                    th, ctrl_w);
+    row_label_right(row, th, ctrl_w);
     ImGui::PushID("aspect_ratio");
-    if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
+    if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(btn_w, px(30))))
         launcher_model_cycle_aspect(m);
     if (m->aspect_experimental) {
         ImGui::SameLine(0, px(8));
@@ -3899,7 +3957,6 @@ bool any_deep_display(const LauncherModel* m) {
            m->has_scanlines ||
            m->has_fmv_filter ||
            m->has_frame_interp || m->has_skip_fmv ||
-           m->has_geometry_precision ||
            m->has_rewind_depth;
            /* has_turbo_loads is intentionally absent: it draws no row (below).
             * has_vsync no longer forces the deep surface: the legacy branch
@@ -4003,66 +4060,41 @@ void draw_shader_row(LauncherModel* m, const LauncherTheme& th, float col_w = 0.
     ImGui::EndDisabled();
 }
 
-/* Graphics preset (GameInfo.quality_*): Low / Medium / High / Ultra set every
- * quality row at once; changing any of those rows afterwards turns it into
- * Custom (launcher_model_quality_track), which the host never overrides.
- * Re-detect runs the host's hardware detection again. */
-void draw_quality_preset_row(LauncherModel* m, const LauncherTheme& th) {
-    if (!launcher_model_quality_offered(m)) return;
-    launcher_model_quality_track(m);
-    const int cur = m->s.quality_preset;
-    const float gap = px(th.spacing_sm);
-    const float btn_w = px(92);
-    float combo_w = px(SETTINGS_CTRL_W) - btn_w - gap;
-    if (combo_w < px(110)) combo_w = px(110);
-    // Reserve both controls after enforcing the combo minimum. Otherwise
-    // Re-detect spills beyond the settings column's clip rectangle.
-    row_label_right("Graphics preset", th, combo_w + gap + btn_w);
-    ImGui::SetNextItemWidth(combo_w);
-    if (ImGui::BeginCombo("##quality_preset",
-                          ui_text(cur ? launcher_model_quality_label(cur) : "Detected"))) {
-        for (int p = 1; p <= 4; ++p) {
-            if (!(m->quality_offered_mask & (1 << (p - 1)))) continue;
-            std::string label = ui_text(launcher_model_quality_label(p));
-            if (p == m->quality_detected) label += std::string(" (") + ui_text("detected") + ")";
-            if (ImGui::Selectable(label.c_str(), cur == p))
-                launcher_model_quality_select(m, p);
-        }
-        if (cur == 5)
-            ImGui::Selectable(ui_text("Custom"), true, ImGuiSelectableFlags_Disabled);
-        ImGui::EndCombo();
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-        ImGui::SetTooltip("%s", ui_text(
-            "Sets every graphics option below for your hardware.\n"
-            "Change any of them and the preset becomes Custom;\n"
-            "your choices are then kept until you pick a preset again.\n"
-            "Dynamic resolution still steps down if a frame runs late."));
-    ImGui::SameLine(0, gap);
-    ImGui::BeginDisabled(m->quality_redetect == NULL);
-    if (ImGui::Button(ui_text("Re-detect"), ImVec2(btn_w, 0)))
-        launcher_model_quality_redetect(m);
+/* The VSync row while an enabled mod presents with driver vsync off
+ * (launcher_model_vsync_forced_off_by): the control is shown disabled at Off,
+ * with one line saying which mod owns it, rather than offering a choice that
+ * would not apply. The saved choice is untouched and returns with the mod off.
+ * Returns true when it drew the overridden row. */
+static const struct { int v; const char* label; } kVsyncChoices[] = {
+    { RECOMP_LAUNCHER_VSYNC_OFF,      "Off" },
+    { RECOMP_LAUNCHER_VSYNC_ON,       "On" },
+    { RECOMP_LAUNCHER_VSYNC_ADAPTIVE, "Adaptive" },
+};
+/* The VSync dropdown's width: its widest choice. */
+static float vsync_combo_w(const LauncherTheme& th) {
+    const int n = (int)(sizeof kVsyncChoices / sizeof kVsyncChoices[0]);
+    return settings_fit_w("VSync", th, settings_widest_text(n,
+        [](int i) { return kVsyncChoices[i].label; }), true);
+}
+
+bool draw_vsync_overridden_row(LauncherModel* m, const LauncherTheme& th) {
+    const char* by = launcher_model_vsync_forced_off_by(m);
+    if (!by) return false;
+    const float w = vsync_combo_w(th);
+    row_label_right("VSync", th, w);
+    ImGui::BeginDisabled();
+    ImGui::SetNextItemWidth(w);
+    if (ImGui::BeginCombo("##vsync_overridden", ui_text("Off"))) ImGui::EndCombo();
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", ui_text("Detect this computer again and apply the preset it suits."));
-    if (m->quality_summary && *m->quality_summary) {
-        ImGui::PushTextWrapPos(0.0f);
-        if (m->quality_detected >= 1 && m->quality_detected <= 4)
-            ImGui::TextColored(col(th.text_muted), "%s %s: %s", ui_text("Detected"),
-                               ui_text(launcher_model_quality_label(m->quality_detected)),
-                               m->quality_summary);
-        else
-            ImGui::TextColored(col(th.text_muted), "%s", m->quality_summary);
-        if (cur == 5 && m->s.quality_base >= 1 && m->s.quality_base <= 4)
-            ImGui::TextColored(col(th.text_muted), "%s %s", ui_text("Custom, based on"),
-                               ui_text(launcher_model_quality_label(m->s.quality_base)));
-        ImGui::PopTextWrapPos();
-    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(col(th.text_muted), "%s %s",
+                       ui_text("Off while this mod is on:"), by);
+    ImGui::PopTextWrapPos();
+    return true;
 }
 
 void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("DISPLAY");
-    draw_quality_preset_row(m, th);
 
     if (!any_deep_display(m)) {
         // ---- legacy minimal surface (SNES/NES etc.) ---------------------------
@@ -4103,10 +4135,12 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         // matching the old Display panel order.
         row_fullscreen(m, th);
         if (m->num_display_layouts > 0) {
-            row_label_right("Screen layout", th, px(180));
+            const float lw = settings_cycle_w(m, "Screen layout", th,
+                launcher_model_cycle_display_layout, launcher_model_display_layout_label);
+            row_label_right("Screen layout", th, lw);
             ImGui::PushID("screen_layout");
             if (ImGui::Button(ui_text(launcher_model_display_layout_label(m)),
-                              ImVec2(px(180), px(30))))
+                              ImVec2(lw, px(30))))
                 launcher_model_cycle_display_layout(m);
             ImGui::PopID();
         }
@@ -4117,11 +4151,13 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
         }
         if (m->has_sharp_filter) {
-            row_label_right("Scaling filter", th, px(180));
+            const float fw = settings_cycle_w(m, "Scaling filter", th,
+                launcher_model_cycle_scaling_filter, launcher_model_scaling_filter_label);
+            row_label_right("Scaling filter", th, fw);
             if (ImGui::Button(ui_text(launcher_model_scaling_filter_label(m)),
-                              ImVec2(px(180), px(30))))
+                              ImVec2(fw, px(30))))
                 launcher_model_cycle_scaling_filter(m);
-        } else {
+        } else if (!m->linear_filter_hidden) {
             row_label_right("Linear filtering", th, cb);
             bool filter = m->s.linear_filter != 0;
             if (ImGui::Checkbox("##filter", &filter))
@@ -4149,7 +4185,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         // On/Off checkbox rather than the deep surface's tri-state dropdown:
         // legacy-surface hosts map this onto a boolean renderer flag, so
         // offering "Adaptive" here would promise what they cannot deliver.
-        if (m->has_vsync) {
+        if (m->has_vsync && !draw_vsync_overridden_row(m, th)) {
             row_label_right("VSync", th, cb);
             bool vs = m->s.vsync != RECOMP_LAUNCHER_VSYNC_OFF;
             if (ImGui::Checkbox("##vsync", &vs))
@@ -4200,8 +4236,10 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     // Labels left, controls right (row_label_right), same as the legacy card.
     const float cb = ImGui::GetFrameHeight();   // a checkbox is square
     if (m->has_window_size) {
-        row_label_right("Window size", th, px(SETTINGS_CTRL_W));
-        if (ImGui::Button(ui_text(launcher_model_window_size_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+        const float ww = settings_cycle_w(m, "Window size", th,
+            launcher_model_cycle_window_size, launcher_model_window_size_label);
+        row_label_right("Window size", th, ww);
+        if (ImGui::Button(ui_text(launcher_model_window_size_label(m)), ImVec2(ww, px(30))))
             launcher_model_cycle_window_size(m);
     } else {
         row_window_scale(m, th);
@@ -4223,8 +4261,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
          * hosts that supply their own (Auto / D3D11 / D3D9 / OpenGL /
          * Software), and reaching the last one by clicking through the other
          * four is not a choice a player should have to count out. */
-        row_label_right("Renderer", th, px(SETTINGS_CTRL_W));
-        ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+        const float rw = settings_fit_w("Renderer", th, settings_widest_text(
+            launcher_model_renderer_count(m),
+            [&](int i) { return launcher_model_renderer_label_at(m, i); }), true);
+        row_label_right("Renderer", th, rw);
+        ImGui::SetNextItemWidth(rw);
         if (ImGui::BeginCombo("##renderer",
                               ui_text(launcher_model_renderer_label(m)))) {
             const int n = launcher_model_renderer_count(m);
@@ -4236,12 +4277,10 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             }
             ImGui::EndCombo();
         }
-        /* The control column is a FIXED width shared by every row in the card,
-         * and an honest renderer label does not fit in it -- "OpenGL
-         * (experimental ...)" closes to "OpenGL (exper". The popup sizes
-         * itself to the longest entry and reads fine, but the CLOSED combo is
-         * what a player looks at most of the time, so the full label is a
-         * hover away rather than lost. */
+        /* The combo is as wide as its longest renderer label ("OpenGL
+         * (Recommended)") up to what the card leaves; a host label longer
+         * than that still closes elided, so the full label stays a hover
+         * away. */
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
             ImGui::SetTooltip("%s", ui_text(launcher_model_renderer_label(m)));
         /* The host's own words about what this choice costs and when it takes
@@ -4259,8 +4298,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
          * 1440p / 4K / 5K / 8K / Match display, plus any legacy Nx entry it
          * synthesized). A list for the same reason Renderer is one: eight
          * entries are not something to click through. */
-        row_label_right("Internal resolution", th, px(SETTINGS_CTRL_W));
-        ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+        const float iw = settings_fit_w("Internal resolution", th, settings_widest_text(
+            launcher_model_internal_resolution_count(m),
+            [&](int i) { return launcher_model_internal_resolution_label_at(m, i); }), true);
+        row_label_right("Internal resolution", th, iw);
+        ImGui::SetNextItemWidth(iw);
         internal_resolution_combo(m,"##internal_resolution");
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip("%s", ui_text(
@@ -4268,6 +4310,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 "Cost grows with the square of the scale.\n"
                 "Match display uses your monitor's full resolution.\n"
                 "Applies when the game starts.\n"
+                "Auto renders at your monitor's resolution and steps down\n"
+                "when the game would miss frames, then back up.\n"
                 "Netplay: your view only; other players are unaffected."));
         }
         /* The host's words (for example the GPU clamp that applies here),
@@ -4280,9 +4324,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PopTextWrapPos();
         }
     } else if (m->has_supersampling) {
-        row_label_right("Supersampling", th, px(SETTINGS_CTRL_W));
+        const float sw = settings_cycle_w(m, "Supersampling", th,
+            launcher_model_cycle_supersampling, launcher_model_supersampling_label);
+        row_label_right("Supersampling", th, sw);
         ImGui::PushID("supersampling");
-        if (ImGui::Button(ui_text(launcher_model_supersampling_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+        if (ImGui::Button(ui_text(launcher_model_supersampling_label(m)), ImVec2(sw, px(30))))
             launcher_model_cycle_supersampling(m);
         ImGui::PopID();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
@@ -4294,59 +4340,39 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         }
     }
 
-    if (m->has_dynamic_resolution && m->s.renderer == 1 &&
-        m->s.internal_resolution != 1) {
-        row_label_right("Dynamic resolution", th, px(SETTINGS_CTRL_W));
-        bool enabled = m->s.dynamic_resolution != 0;
-        if (ImGui::Checkbox("##dynamic_resolution", &enabled))
-            m->s.dynamic_resolution = enabled ? 1 : 0;
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-            ImGui::SetTooltip("Steps down when the game misses frame budgets, then returns to full resolution when there is room.");
-        if (enabled) {
-            static const int floors[] = {1, 720, 1080, 1440};
-            static const char* labels[] = {"Native", "720p", "1080p", "1440p"};
-            int cur = 1;
-            for (int i = 0; i < 4; ++i)
-                if (m->s.dynamic_resolution_min == floors[i]) cur = i;
-            row_label_right("Lowest resolution", th, px(SETTINGS_CTRL_W));
-            ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
-            if (ImGui::BeginCombo("##dynamic_resolution_min", labels[cur])) {
-                for (int i = 0; i < 4; ++i)
-                    if (ImGui::Selectable(labels[i], cur == i))
-                        m->s.dynamic_resolution_min = floors[i];
-                ImGui::EndCombo();
-            }
-        }
-    }
-
     // Universal fullscreen row (every console — no longer gated on the
     // vestigial has_fullscreen_toggle). A tri-state dropdown, so Exclusive is
     // both reachable and visible without pressing through the other two.
     row_fullscreen(m, th);
     if (m->num_display_layouts > 0) {
-        /* Wider than the shared column: these labels come from the HOST, not
-         * from a vocabulary this file owns, and a button (unlike a combo) does
-         * not elide -- so it keeps the room the widest stock layout name
-         * needs. Right-anchored like every other row regardless. */
-        row_label_right("Screen layout", th, px(180));
+        /* These labels come from the HOST, and a button (unlike a combo) does
+         * not elide, so it is as wide as the widest layout name it cycles
+         * through. Right-anchored like every other row. */
+        const float lw = settings_cycle_w(m, "Screen layout", th,
+            launcher_model_cycle_display_layout, launcher_model_display_layout_label);
+        row_label_right("Screen layout", th, lw);
         ImGui::PushID("screen_layout");
         if (ImGui::Button(ui_text(launcher_model_display_layout_label(m)),
-                          ImVec2(px(180), px(30))))
+                          ImVec2(lw, px(30))))
             launcher_model_cycle_display_layout(m);
         ImGui::PopID();
     }
     draw_aspect_row(m, th);
 
     if (m->has_sharp_filter) {
-        row_label_right("Scaling filter", th, px(SETTINGS_CTRL_W));
+        const float fw = settings_cycle_w(m, "Scaling filter", th,
+            launcher_model_cycle_scaling_filter, launcher_model_scaling_filter_label);
+        row_label_right("Scaling filter", th, fw);
         if (ImGui::Button(ui_text(launcher_model_scaling_filter_label(m)),
-                          ImVec2(px(SETTINGS_CTRL_W), px(30))))
+                          ImVec2(fw, px(30))))
             launcher_model_cycle_scaling_filter(m);
     } else if (m->has_texture_filter) {
-        row_label_right("Texture filtering", th, px(SETTINGS_CTRL_W));
-        if (ImGui::Button(ui_text(launcher_model_texture_filter_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+        const float tw = settings_cycle_w(m, "Texture filtering", th,
+            launcher_model_toggle_texture_filter, launcher_model_texture_filter_label);
+        row_label_right("Texture filtering", th, tw);
+        if (ImGui::Button(ui_text(launcher_model_texture_filter_label(m)), ImVec2(tw, px(30))))
             launcher_model_toggle_texture_filter(m);
-    } else {
+    } else if (!m->linear_filter_hidden) {
         row_label_right("Linear filtering", th, cb);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
@@ -4366,9 +4392,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_antialiasing) {
-        row_label_right("Antialiasing", th, px(SETTINGS_CTRL_W));
+        const float aw = settings_cycle_w(m, "Antialiasing", th,
+            launcher_model_cycle_aa, launcher_model_aa_label);
+        row_label_right("Antialiasing", th, aw);
         ImGui::PushID("antialiasing");
-        if (ImGui::Button(ui_text(launcher_model_aa_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+        if (ImGui::Button(ui_text(launcher_model_aa_label(m)), ImVec2(aw, px(30))))
             launcher_model_cycle_aa(m);
         ImGui::PopID();
     }
@@ -4378,13 +4406,15 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
      * window, and the good answer differs between the two. Antialiasing off
      * means nearest everywhere, so the row has nothing to say then. */
     if (m->has_fmv_filter) {
-        row_label_right("FMV filtering", th, px(SETTINGS_CTRL_W));
+        const float vw = settings_cycle_w(m, "FMV filtering", th,
+            launcher_model_cycle_fmv_filter, launcher_model_fmv_filter_label);
+        row_label_right("FMV filtering", th, vw);
         ImGui::PushID("fmv_filter");
         const bool aa_off = m->has_antialiasing && m->s.antialiasing == 0;
         if (aa_off) ImGui::BeginDisabled();
         if (ImGui::Button(ui_text(aa_off ? "Nearest"
                                          : launcher_model_fmv_filter_label(m)),
-                          ImVec2(px(SETTINGS_CTRL_W), px(30))))
+                          ImVec2(vw, px(30))))
             launcher_model_cycle_fmv_filter(m);
         if (aa_off) {
             ImGui::EndDisabled();
@@ -4404,36 +4434,17 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 
     draw_shader_row(m, th);
 
-    if (m->has_geometry_precision) {
-        // Geometry correction deliberately draws NO row. It moves vertices, and
-        // the runtime can only recover the sub-pixel original for ~5% of them
-        // (93% of lookups are ambiguous), so a corrected triangle meets an
-        // uncorrected neighbour and their shared edge splits open. Measured on
-        // Ape Escape; see psxrecomp ENHANCEMENTS.md G1.8/G1.9. The setting stays
-        // in the ABI and remains readable from game.toml/settings.toml so the
-        // work is still testable, exactly as has_turbo_loads/Settings.turbo_loads
-        // stayed after their row was dropped — it simply has no control.
-        //
-        // Perspective textures are unaffected by that problem: they only change
-        // UV interpolation inside a polygon whose provenance is already proven,
-        // so no vertex moves and adjacent polygons cannot disagree about an edge.
-        row_label_right("Perspective textures", th, cb);
-        bool persp = m->s.perspective_texturing != 0;
-        if (ImGui::Checkbox("##persptex", &persp))
-            launcher_model_toggle_perspective_texturing(m);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Interpolates textures with perspective, which "
-                              "stops large floors and walls from warping as the "
-                              "camera moves.\n\nApplied only to polygons the "
-                              "runtime can prove came from the 3D pipeline, so "
-                              "2D art and menus are left alone.");
-    }
+    /* No Perspective textures (or geometry correction) row: psxrecomp's PGXP
+     * Precision mod owns both on the Mods page, and GameInfo
+     * .has_geometry_precision is ignored. */
 
     if (m->has_screen_kind) {
-        row_label_right("Screen model", th, px(220));
-        // Wide enough for the longest label ("Super Game Boy (No Border)");
-        // shorter models (e.g. "DMG") center within the same fixed box.
-        if (ImGui::Button(ui_text(launcher_model_screen_kind_label(m)), ImVec2(px(220), px(30))))
+        // As wide as the longest model this console offers ("Super Game Boy
+        // (No Border)"); shorter models (e.g. "DMG") center within it.
+        const float kw = settings_cycle_w(m, "Screen model", th,
+            launcher_model_cycle_screen_kind, launcher_model_screen_kind_label);
+        row_label_right("Screen model", th, kw);
+        if (ImGui::Button(ui_text(launcher_model_screen_kind_label(m)), ImVec2(kw, px(30))))
             launcher_model_cycle_screen_kind(m);
     }
 
@@ -4469,25 +4480,23 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         bool fi = m->s.frame_interp != 0;
         if (ImGui::Checkbox("##fi", &fi)) launcher_model_toggle_frame_interp(m);
         if (m->s.frame_interp) {
-            row_label_right("Presentation target", th, px(SETTINGS_CTRL_W));
-            if (ImGui::Button(ui_text(launcher_model_interp_fps_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+            const float pw = settings_cycle_w(m, "Presentation target", th,
+                launcher_model_cycle_interp_fps, launcher_model_interp_fps_label);
+            row_label_right("Presentation target", th, pw);
+            if (ImGui::Button(ui_text(launcher_model_interp_fps_label(m)), ImVec2(pw, px(30))))
                 launcher_model_cycle_interp_fps(m);
         }
     }
 
     // VSync sits with frame interpolation because both decide how a finished
     // frame reaches the panel, not how it is drawn.
-    if (m->has_vsync) {
-        row_label_right("VSync", th, px(SETTINGS_CTRL_W));
-        ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+    if (m->has_vsync && !draw_vsync_overridden_row(m, th)) {
+        const float vw = vsync_combo_w(th);
+        row_label_right("VSync", th, vw);
+        ImGui::SetNextItemWidth(vw);
         if (ImGui::BeginCombo("##vsync_mode",
                               ui_text(launcher_model_vsync_label(m)))) {
-            static const struct { int v; const char* label; } kVsync[] = {
-                { RECOMP_LAUNCHER_VSYNC_OFF,      "Off" },
-                { RECOMP_LAUNCHER_VSYNC_ON,       "On" },
-                { RECOMP_LAUNCHER_VSYNC_ADAPTIVE, "Adaptive" },
-            };
-            for (const auto& o : kVsync)
+            for (const auto& o : kVsyncChoices)
                 if (ImGui::Selectable(ui_text(o.label), m->s.vsync == o.v))
                     launcher_model_set_vsync(m, o.v);
             ImGui::EndCombo();
@@ -4521,8 +4530,10 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         }
         /* The two tuning rows only mean anything once it is on. */
         ImGui::BeginDisabled(!rewind_on);
-        row_label_right("Rewind buffer", th, px(SETTINGS_CTRL_W));
-        if (ImGui::Button(ui_text(launcher_model_rewind_depth_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+        const float bw = settings_cycle_w(m, "Rewind buffer", th,
+            launcher_model_cycle_rewind_depth, launcher_model_rewind_depth_label);
+        row_label_right("Rewind buffer", th, bw);
+        if (ImGui::Button(ui_text(launcher_model_rewind_depth_label(m)), ImVec2(bw, px(30))))
             launcher_model_cycle_rewind_depth(m);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip(
@@ -4530,8 +4541,10 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 "Keeping more history uses more memory.\n"
                 "Takes effect on the next launch.");
         }
-        row_label_right("Rewind interval", th, px(SETTINGS_CTRL_W));
-        if (ImGui::Button(ui_text(launcher_model_rewind_interval_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+        const float iw = settings_cycle_w(m, "Rewind interval", th,
+            launcher_model_cycle_rewind_interval, launcher_model_rewind_interval_label);
+        row_label_right("Rewind interval", th, iw);
+        if (ImGui::Button(ui_text(launcher_model_rewind_interval_label(m)), ImVec2(iw, px(30))))
             launcher_model_cycle_rewind_interval(m);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip(
@@ -4617,9 +4630,11 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     // setting (SystemProfile.hide_audio_freq — NES has Volume only).
     const SystemProfile* audio_prof = (const SystemProfile*)m->profile;
     if (!audio_prof || !audio_prof->hide_audio_freq) {
-        row_label_right("Sample rate", th, px(SETTINGS_CTRL_W));
+        const float fw = settings_cycle_w(m, "Sample rate", th,
+            launcher_model_cycle_freq, launcher_model_freq_label);
+        row_label_right("Sample rate", th, fw);
         if (ImGui::Button(ui_text(launcher_model_freq_label(m)),
-                          ImVec2(px(SETTINGS_CTRL_W), px(30))))
+                          ImVec2(fw, px(30))))
             launcher_model_cycle_freq(m);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Choose the host audio output sample rate. Game and music speed stay unchanged.");
     }
@@ -4698,8 +4713,10 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     if (m->num_languages > 0) {
         ImGui::Dummy(ImVec2(0, px(6)));
         eyebrow("LOCALIZATION");
-        row_label_right("Language", th, px(SETTINGS_CTRL_W));
-        if (ImGui::Button(ui_text(launcher_model_language_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+        const float lw = settings_cycle_w(m, "Language", th,
+            launcher_model_cycle_language, launcher_model_language_label);
+        row_label_right("Language", th, lw);
+        if (ImGui::Button(ui_text(launcher_model_language_label(m)), ImVec2(lw, px(30))))
             launcher_model_cycle_language(m);
     }
 }
