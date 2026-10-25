@@ -929,6 +929,19 @@ const char* launcher_model_renderer_note(const LauncherModel* m);
 void launcher_model_apply_renderer_settings(LauncherModel* m);
 void launcher_model_cycle_supersampling(LauncherModel* m);     // 1x..4x wrap
 const char* launcher_model_supersampling_label(const LauncherModel* m);
+/* Every label a cycle-button row can show: `label` of the current value, then
+ * of each value `cycle` steps to, until a label repeats (at most
+ * LNG_CYCLE_LABELS_MAX). Run on a scratch copy of the model -- the cycle and
+ * label functions only touch m->s -- so the model is never changed. `visit`
+ * gets each distinct label once. The settings page sizes a button to the
+ * widest of them (docs/SETTINGS_STANDARD.md: controls sized to their labels).
+ * Returns the number of labels visited. */
+#define LNG_CYCLE_LABELS_MAX 64
+int launcher_model_each_cycle_label(const LauncherModel* m,
+                                    void (*cycle)(LauncherModel*),
+                                    const char* (*label)(const LauncherModel*),
+                                    void (*visit)(const char* label, void* ctx),
+                                    void* ctx);
 /* Internal resolution as a host-supplied LIST (Native / 720p / ... / Match
  * display). offered: has_supersampling and a non-empty vocabulary. The index
  * getters speak the vocabulary; set stores the entry's value, and a value

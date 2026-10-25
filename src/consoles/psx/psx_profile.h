@@ -102,10 +102,12 @@ static const SystemProfile kSystemProfilePsx = {
     /* save */    { SAVE_MEMCARD, 2, NULL },
     /* video */   {
         /* Screen model, texture filtering, antialiasing (smoothing), FMV
-         * filtering and the high-quality SPU are psxrecomp built-in mods now
-         * (CRT Filter, Image Filtering, Enhanced Audio), not video caps. */
+         * filtering, the high-quality SPU and the internal resolution are
+         * psxrecomp built-in mods now (CRT Filter, Image Filtering, Enhanced
+         * Audio, Internal Resolution), not video caps
+         * (docs/SETTINGS_STANDARD.md). */
         /*window_scale*/0, /*fullscreen*/1, /*linear_filter*/0, /*widescreen*/0,
-        /*renderer*/1, /*supersampling*/1, /*screen_kind*/0, /*frame_interp*/1, /*aspect*/1,
+        /*renderer*/1, /*supersampling*/0, /*screen_kind*/0, /*frame_interp*/1, /*aspect*/1,
         /*texture_filter*/0, /*antialiasing*/0, /*spu_hq*/0, /*skip_fmv*/1, /*turbo_loads*/1,
         /*bios*/1, /*deadzone*/1,
         /*widescreen_cells*/0, /*fmv_filter*/0,
@@ -133,7 +135,7 @@ static const SystemProfile kSystemProfilePsx = {
     /* rom_filter        */ { kPsxDiscPatterns, LNG_PSX_DISC_PATTERN_COUNT,
                               "PlayStation disc / SBI (.cue/.bin/.car/.sbi/.chd)" },
     /* renderer_labels   */ NULL,
-    /* hide_audio_freq   */ 0,
+    /* hide_audio_freq   */ 1,       // psxrecomp opens audio at its built-in rate; Volume only
     /* brand             */ "brand_psx.tga",
     /* wordmark_image    */ NULL,
 };
@@ -160,13 +162,16 @@ static inline void launcher_profile_apply_psx(RecompLauncherCGameInfo* gi) {
      * plugins activate those features after launcher resolution. */
     gi->widescreen_supported = 0;
     gi->aspect_mask           = 0;
-    // PS1 settings surface: the PC/system rows only. The look of the game
-    // -- screen model and scanlines, smoothing, texture and FMV filtering,
-    // the high-quality SPU, rewind -- is psxrecomp's built-in mods (CRT
-    // Filter, Image Filtering, Enhanced Audio, Rewind) on the Mods page, so
-    // none of those rows is offered here, and no Linear filtering fallback
-    // either. The Rewind hotkey stays on the Hotkeys page (hotkeys_mask).
-    gi->has_window_size = 1; gi->has_renderer = 1; gi->has_supersampling = 1;
+    // PS1 settings surface: the PC/system rows only (docs/SETTINGS_STANDARD.md).
+    // The look of the game -- screen model and scanlines, smoothing, texture
+    // and FMV filtering, the internal resolution, the high-quality SPU,
+    // rewind -- is psxrecomp's built-in mods (CRT Filter, Image Filtering,
+    // Internal Resolution, Enhanced Audio, Rewind) on the Mods page, so none
+    // of those rows is offered here, and no Linear filtering fallback either.
+    // The audio Sample rate row is hidden too (SystemProfile.hide_audio_freq):
+    // the runtime opens the device at its built-in rate. The Rewind hotkey
+    // stays on the Hotkeys page (hotkeys_mask).
+    gi->has_window_size = 1; gi->has_renderer = 1; gi->has_supersampling = 0;
     gi->has_antialiasing = 0; gi->has_texture_filter = 0; gi->has_screen_kind = 0;
     gi->has_fmv_filter = 0;
     gi->has_frame_interp = 0; gi->has_spu_hq = 0; gi->has_skip_fmv = 0;

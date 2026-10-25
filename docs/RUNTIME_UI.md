@@ -170,8 +170,9 @@ the same.
   relaunch when the menu closes); System > Resume, Pause in menu, Return to
   launcher, Quit; Disc > Selected disc, Insert disc and resume (multi-disc
   titles, through the runtime's tray policy). Linear, FMV and texture
-  filtering are not rows: psxrecomp's Image Filtering mod owns them, with the
-  CRT Filter, Enhanced Audio and Rewind mods (the Mods page).
+  filtering and the internal resolution are not rows: psxrecomp's Image
+  Filtering and Internal Resolution mods own them, with the CRT Filter,
+  Enhanced Audio and Rewind mods (the Mods page; SETTINGS_STANDARD.md).
 - Opens with F10 or Ctrl+L, or Select + L3; arrows / Enter / Esc or D-pad /
   Cross / Circle navigate. Each opening starts at the first section.
 - Selection: psxrecomp uses it when the title registers no provider, so

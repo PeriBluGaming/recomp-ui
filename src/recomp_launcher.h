@@ -1242,7 +1242,7 @@ struct RecompLauncherCSettings {
     int  widescreen;        // bool (EXPERIMENTAL, default 0)
     int  widescreen_hud;    // bool
     int  enable_audio;      // bool
-    int  audio_freq;        // Hz
+    int  audio_freq;        // Hz (the Sample rate row; SystemProfile.hide_audio_freq hides it)
     int  volume;            // 0..100
     int  player_src[RECOMP_LAUNCHER_MAX_PLAYERS];  // 0 none, 1 keyboard, 2 gamepad
     int  deadzone[RECOMP_LAUNCHER_MAX_PLAYERS];    // 0..100
@@ -1572,7 +1572,9 @@ struct RecompLauncherCSettings {
      * resolution switch), N >= 2 = target output lines (720, 1080, 1440,
      * 2160, 2880, 4320, or a host-synthesized legacy entry).
      * Only meaningful when the host supplied a vocabulary. Appended
-     * additively; a zero-initialized host reads as unset. */
+     * additively; a zero-initialized host reads as unset. (psxrecomp no
+     * longer offers the row: its built-in Internal Resolution mod owns the
+     * value, docs/SETTINGS_STANDARD.md. The field stays for other hosts.) */
     int  internal_resolution;
     /* Host-owned NES Zapper switches when GameInfo.settings_bindings is set.
      * 0 = unset (enabled), 1 = enabled, -1 = disabled. */

@@ -2250,6 +2250,37 @@ void launcher_model_apply_internal_resolution_settings(LauncherModel* m) {
         m->s.internal_resolution = m->internal_resolution_values[0];
 }
 
+/* One scratch model for launcher_model_each_cycle_label: the launcher model is
+ * ~60 KB, too big for the stack of a draw call, and the launcher draws on one
+ * thread. */
+static LauncherModel s_cycle_probe;
+
+int launcher_model_each_cycle_label(const LauncherModel* m,
+                                    void (*cycle)(LauncherModel*),
+                                    const char* (*label)(const LauncherModel*),
+                                    void (*visit)(const char* label, void* ctx),
+                                    void* ctx) {
+    if (!m || !cycle || !label || !visit) return 0;
+    /* Labels are copied out at once: several label functions format into one
+     * static buffer that the next call overwrites. */
+    static char seen[LNG_CYCLE_LABELS_MAX][64];
+    int n = 0;
+    s_cycle_probe = *m;
+    for (int step = 0; step < LNG_CYCLE_LABELS_MAX; ++step) {
+        const char* l = label(&s_cycle_probe);
+        if (!l) l = "";
+        int repeat = 0;
+        for (int i = 0; i < n && !repeat; ++i)
+            repeat = strncmp(seen[i], l, sizeof seen[i] - 1) == 0;
+        if (repeat) break;
+        safe_copy(seen[n], sizeof seen[n], l);
+        visit(seen[n], ctx);
+        ++n;
+        cycle(&s_cycle_probe);
+    }
+    return n;
+}
+
 const char* launcher_model_supersampling_label(const LauncherModel* m) {
     /* Settings SSAA: offline full SW/GL path; netplay dual-raster uses this
      * for OpenGL present quality while SW authority stays 1×. */
