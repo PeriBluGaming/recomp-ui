@@ -101,11 +101,14 @@ static const SystemProfile kSystemProfilePsx = {
     // renders a full, real placeholder grid in the meantime (never a TODO).
     /* save */    { SAVE_MEMCARD, 2, NULL },
     /* video */   {
+        /* Screen model, texture filtering, antialiasing (smoothing), FMV
+         * filtering and the high-quality SPU are psxrecomp built-in mods now
+         * (CRT Filter, Image Filtering, Enhanced Audio), not video caps. */
         /*window_scale*/0, /*fullscreen*/1, /*linear_filter*/0, /*widescreen*/0,
-        /*renderer*/1, /*supersampling*/1, /*screen_kind*/1, /*frame_interp*/1, /*aspect*/1,
-        /*texture_filter*/1, /*antialiasing*/1, /*spu_hq*/1, /*skip_fmv*/1, /*turbo_loads*/1,
+        /*renderer*/1, /*supersampling*/1, /*screen_kind*/0, /*frame_interp*/1, /*aspect*/1,
+        /*texture_filter*/0, /*antialiasing*/0, /*spu_hq*/0, /*skip_fmv*/1, /*turbo_loads*/1,
         /*bios*/1, /*deadzone*/1,
-        /*widescreen_cells*/0, /*fmv_filter*/1,
+        /*widescreen_cells*/0, /*fmv_filter*/0,
     },
     /* verify */  { 1, NULL },    // disc-verdict mode; probe==NULL -> synthesized verdict (see launcher_model.c)
     // PSX's real hotkey catalog: the everyday transport controls only. Omits
@@ -157,16 +160,21 @@ static inline void launcher_profile_apply_psx(RecompLauncherCGameInfo* gi) {
      * plugins activate those features after launcher resolution. */
     gi->widescreen_supported = 0;
     gi->aspect_mask           = 0;
-    // Full PS1 settings surface.
+    // PS1 settings surface: the PC/system rows only. The look of the game
+    // -- screen model and scanlines, smoothing, texture and FMV filtering,
+    // the high-quality SPU, rewind -- is psxrecomp's built-in mods (CRT
+    // Filter, Image Filtering, Enhanced Audio, Rewind) on the Mods page, so
+    // none of those rows is offered here, and no Linear filtering fallback
+    // either. The Rewind hotkey stays on the Hotkeys page (hotkeys_mask).
     gi->has_window_size = 1; gi->has_renderer = 1; gi->has_supersampling = 1;
-    gi->has_antialiasing = 1; gi->has_texture_filter = 1; gi->has_screen_kind = 1;
-    gi->has_fmv_filter = 1;    /* MDEC decodes video at native res; how it is
-                                * scaled to the window is a player choice. */
-    gi->has_frame_interp = 0; gi->has_spu_hq = 1; gi->has_skip_fmv = 0;
-    gi->has_scanlines = 1;     /* present-time CRT scanline post-process */
+    gi->has_antialiasing = 0; gi->has_texture_filter = 0; gi->has_screen_kind = 0;
+    gi->has_fmv_filter = 0;
+    gi->has_frame_interp = 0; gi->has_spu_hq = 0; gi->has_skip_fmv = 0;
+    gi->has_scanlines = 0;
     gi->has_turbo_loads = 1; gi->has_bios = 1;
     gi->has_deadzone_pct = 1;
-    gi->has_rewind_depth = RECOMP_UI_PSX_HAS_REWIND ? 1 : 0;
+    gi->has_rewind_depth = 0;
+    gi->linear_filter_hidden = 1;
     gi->has_vsync = 1;         /* psxrecomp paces frames itself, so driver
                                 * vsync is a latency-vs-tearing choice. */
 }

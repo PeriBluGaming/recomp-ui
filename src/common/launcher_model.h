@@ -350,19 +350,9 @@ typedef struct {
     const int*         internal_resolution_values;
     int                num_internal_resolutions;
     const char*        internal_resolution_note;
-    bool               has_dynamic_resolution;
     bool               has_render_pipeline;   // GameInfo.has_render_pipeline
-    // ---- graphics presets (GameInfo.quality_*; Settings.quality_preset) ----
-    int                quality_offered_mask;
-    int                quality_detected;
-    const char*        quality_summary;
-    const char*        quality_reason;
-    void (*quality_apply)(int preset, RecompLauncherCSettings* s);
-    int  (*quality_redetect)(void);
-    // The governed fields as the last preset set them; any difference means
-    // the player customised (launcher_model_quality_track).
-    RecompLauncherCSettings quality_snapshot;
-    bool               quality_snapshot_valid;
+    // GameInfo.linear_filter_hidden: no legacy "Linear filtering" row.
+    bool               linear_filter_hidden;
 
     // ---- rebind-page opt-out (GameInfo.hide_rebind) ------------------------
     bool hide_rebind;
@@ -486,10 +476,8 @@ typedef struct {
     bool     has_vsync;
     bool     has_skip_fmv;
     bool     has_turbo_loads;
-    // PSX geometry precision: sub-pixel vertices + perspective-correct UVs.
-    // One flag gates both rows (two halves of one enhancement); the settings
-    // stay independent. false => both rows hidden.
-    bool     has_geometry_precision;
+    // (GameInfo.has_geometry_precision is not read: psxrecomp's PGXP
+    // Precision mod owns perspective textures, so there is no row.)
     // (no has_fullscreen_toggle: the Fullscreen row is universal — every
     // console draws it; the ABI flag of that name is deprecated/ignored.)
     bool     has_bios;
@@ -951,17 +939,6 @@ bool        launcher_model_internal_resolution_offered(const LauncherModel* m);
  * renderer is OpenGL (index 1). The two child rows are editable only while
  * Render thread is on. */
 bool        launcher_model_render_pipeline_offered(const LauncherModel* m);
-/* Graphics presets: offered when the host set quality_offered_mask. */
-bool        launcher_model_quality_offered(const LauncherModel* m);
-/* Apply preset 1..4 through the host and remember what it set. */
-void        launcher_model_quality_select(LauncherModel* m, int preset);
-/* Re-run the host's detection and apply the result. */
-void        launcher_model_quality_redetect(LauncherModel* m);
-/* Call every frame: a governed field that differs from the preset's value
- * switches the state to Custom (5), keeping quality_base. */
-void        launcher_model_quality_track(LauncherModel* m);
-/* "Low" .. "Ultra", "Custom", "" for 0. */
-const char* launcher_model_quality_label(int preset);
 bool        launcher_model_render_pipeline_children_enabled(const LauncherModel* m);
 int         launcher_model_internal_resolution_count(const LauncherModel* m);
 const char* launcher_model_internal_resolution_label_at(const LauncherModel* m, int i);
@@ -985,12 +962,6 @@ void launcher_model_cycle_fmv_filter(LauncherModel* m);
 const char* launcher_model_fmv_filter_label(const LauncherModel* m);
 void launcher_model_set_shader_path(LauncherModel* m, const char* path);
 void launcher_model_clear_shader_path(LauncherModel* m);
-// PSX geometry precision (gated on has_geometry_precision).
-void launcher_model_toggle_geometry_correction(LauncherModel* m);
-void launcher_model_toggle_perspective_texturing(LauncherModel* m);
-// True when geometry correction is on but supersampling is 1x, where the
-// correction rounds back to the native pixel and has no visible effect.
-bool launcher_model_geometry_correction_inert(const LauncherModel* m);
 void launcher_model_cycle_screen_kind(LauncherModel* m);       // Raw/CRT/Composite/Trinitron
 int launcher_model_screen_kind_count(const LauncherModel* m);
 const char* launcher_model_screen_kind_name(const LauncherModel* m,int index);
@@ -1018,7 +989,12 @@ void launcher_model_toggle_vsync(LauncherModel* m);
 const char* launcher_model_vsync_label(const LauncherModel* m);
 /* Set the exact state rather than cycling to it. Takes a
  * RECOMP_LAUNCHER_VSYNC_* value, not an index. */
-void launcher_model_set_vsync(LauncherModel* m, int value);  // "On"/"Off"/"Adaptive"
+void launcher_model_set_vsync(LauncherModel* m, int value);
+/* The name of an enabled mod feature that presents with driver vsync off
+ * (RecompLauncherCModFeature.forces_vsync_off), or NULL. While one is on,
+ * the VSync row cannot apply, so it is drawn disabled with this as the
+ * reason. The returned text stays valid until the next call. */
+const char* launcher_model_vsync_forced_off_by(const LauncherModel* m);  // "On"/"Off"/"Adaptive"
 void launcher_model_toggle_skip_fmv(LauncherModel* m);
 void launcher_model_toggle_turbo_loads(LauncherModel* m);
 void launcher_model_cycle_fullscreen(LauncherModel* m);        // Off -> Borderless -> Exclusive, wraps

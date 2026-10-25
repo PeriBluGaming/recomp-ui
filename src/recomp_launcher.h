@@ -1036,6 +1036,13 @@ typedef struct RecompLauncherCModFeature {
      * manifest's quick flag. See feature_set_quick. Appended for ABI
      * stability; zero keeps a feature off the card. */
     int  quick;
+    /* While enabled, this feature presents with driver vsync off (frame
+     * interpolation, native frame pacing above the panel rate), so the
+     * Display card's VSync row shows as overridden by it instead of offering
+     * a choice that would not apply. The provider reports the manifest's
+     * declaration and anything it saw a feature do. Appended for ABI
+     * stability; zero leaves the row alone. */
+    int  forces_vsync_off;
 } RecompLauncherCModFeature;
 
 typedef struct RecompLauncherCModOption {
@@ -1220,6 +1227,8 @@ typedef struct RecompLauncherCModProvider {
                              const char* feature_id, int quick);
 } RecompLauncherCModProvider;
 #define RECOMP_LAUNCHER_HAS_QUICK_MODS 1
+/* RecompLauncherCModFeature carries forces_vsync_off. */
+#define RECOMP_LAUNCHER_HAS_MOD_VSYNC_OFF 1
 #define RECOMP_LAUNCHER_HAS_WORKER_MOD_COMMIT 1
 #define RECOMP_LAUNCHER_HAS_PREPARED_MOD_COMMIT 1
 
@@ -1558,18 +1567,19 @@ struct RecompLauncherCSettings {
      * (GameInfo.internal_resolution_labels/_values). The encoding is the
      * host's, but the convention is: 0 = unset (a host that predates this
      * field, or none chosen: the legacy `supersampling` stands), 1 = native,
-     * -1 = match the display, N >= 2 = target output lines (720, 1080,
-     * 1440, 2160, 2880, 4320, or a host-synthesized legacy entry).
+     * -1 = match the display, -2 = auto (match the display, stepping down
+     * while the game would miss frames: what used to be a separate Dynamic
+     * resolution switch), N >= 2 = target output lines (720, 1080, 1440,
+     * 2160, 2880, 4320, or a host-synthesized legacy entry).
      * Only meaningful when the host supplied a vocabulary. Appended
      * additively; a zero-initialized host reads as unset. */
     int  internal_resolution;
     /* Host-owned NES Zapper switches when GameInfo.settings_bindings is set.
      * 0 = unset (enabled), 1 = enabled, -1 = disabled. */
     int zapper_mouse, zapper_crosshair;
-    /* Host opt-in scale controller. The minimum uses the same line-height
-     * encoding as internal_resolution (1 = Native, 720/1080/1440). */
-    int  dynamic_resolution;
-    int  dynamic_resolution_min;
+    /* (dynamic_resolution / dynamic_resolution_min were removed: dynamic
+     * resolution is internal_resolution = -2, auto, and its floor is the
+     * host's own.) */
     /* Host rendering pipeline (GameInfo.has_render_pipeline), 0/1 each.
      * render_thread runs the renderer on its own thread; present_thread and
      * frame_generation only take effect with it on. Applied at next launch.
@@ -1577,13 +1587,8 @@ struct RecompLauncherCSettings {
     int  render_thread;
     int  present_thread;
     int  frame_generation;
-    /* Graphics preset (GameInfo.quality_offered_mask): 0 = unset, 1 Low,
-     * 2 Medium, 3 High, 4 Ultra, 5 Custom (the player changed a setting a
-     * preset governs; quality_base is the preset it started from, 1..4).
-     * The launcher sets Custom itself; the host owns detection. Appended
-     * additively; a zero-initialized host reads as unset. */
-    int  quality_preset;
-    int  quality_base;
+    /* (quality_preset / quality_base were removed with the Graphics preset
+     * row.) */
     /* Used only by hosts declaring assist_fast_forward_divisor > 1. */
     int  fast_forward_toggle_mode;
 };
@@ -2086,13 +2091,11 @@ typedef struct RecompLauncherCGameInfo {
         int download, const char* zip_path, char* err_msg, size_t err_cap,
         RecompLauncherCPrepareProgressFn on_progress, void* progress_ctx);
     /* PSX geometry-precision controls (Settings.geometry_correction /
-     * perspective_texturing). 0 => no row drawn, so every console that leaves
-     * this unset keeps exactly today's settings surface. One flag still gates
-     * both settings because they are two halves of the same enhancement, but
-     * only perspective_texturing currently draws a control: geometry_correction
-     * is known to crack meshes at the coverage the runtime can achieve and is
-     * withdrawn from the UI while staying readable from game.toml/settings.toml
-     * (psxrecomp ENHANCEMENTS.md G1.8/G1.9). Appended for ABI stability. */
+     * perspective_texturing). No longer drawn: psxrecomp's PGXP Precision mod
+     * (psx.enhancement.pgxp, the Mods page) owns both, and a Settings row
+     * beside it was a second switch for the same thing. The flag and the two
+     * Settings fields stay for ABI layout and older hosts, the same as
+     * has_turbo_loads; a launcher ignores them. Appended for ABI stability. */
     int  has_geometry_precision;
 
     /* Local rewind buffer size control (Settings.rewind_depth). PSX only. */
@@ -2336,7 +2339,8 @@ typedef struct RecompLauncherCGameInfo {
     const int*         internal_resolution_values;
     int                num_internal_resolutions;
     const char*        internal_resolution_note;
-    int                has_dynamic_resolution;
+    /* (has_dynamic_resolution was removed: a host offers dynamic resolution
+     * as an entry of the vocabulary above, internal_resolution = -2.) */
     /* Nonzero: the host offers Settings.render_thread / present_thread /
      * frame_generation (Display rows, OpenGL only); shown as "Smooth motion". Appended for ABI
      * stability. */
@@ -2380,23 +2384,6 @@ typedef struct RecompLauncherCGameInfo {
      * action index plus one. The title supplies its defaults through
      * assist_default_pad_bind. Appended for ABI stability. */
     int                assist_direct_pad_bind_action;
-
-    /* ---- Graphics presets (Settings.quality_preset) -------------------------
-     * Bit i of quality_offered_mask = preset i+1 (Low, Medium, High, Ultra)
-     * is offered; 0 hides the row. quality_detected is what the host's
-     * detection picked (1..4, 0 unknown); quality_summary names the hardware
-     * ("Apple M1 · 8 threads · 8 GB") and quality_reason the rule. Picking a
-     * preset calls quality_apply, which sets every Settings field that preset
-     * governs; the launcher then watches those fields and switches to Custom
-     * when the player changes one. quality_redetect re-runs detection and
-     * returns the preset it picked (1..4), refreshing the strings (which stay
-     * owned by the host). Appended for ABI stability. */
-    int                quality_offered_mask;
-    int                quality_detected;
-    const char*        quality_summary;
-    const char*        quality_reason;
-    void (*quality_apply)(int preset, RecompLauncherCSettings* s);
-    int  (*quality_redetect)(void);
 
     /* ---- Texture filtering vocabulary (Settings.texture_filter) ------------
      * The host's own values for the texture-filtering row, e.g. a PSX runtime
@@ -2446,7 +2433,16 @@ typedef struct RecompLauncherCGameInfo {
     int                disc_selection_locked;
     const char*        artwork_root;
     int                dashboard_quick_controls;
+
+    /* Nonzero: draw no "Linear filtering" row. A console without
+     * has_texture_filter (or has_sharp_filter) otherwise gets that legacy
+     * checkbox; a host whose image filtering lives elsewhere (psxrecomp: the
+     * Image Filtering mod) sets this so no control that nothing applies is
+     * drawn. Appended for ABI stability; zero keeps the row. */
+    int                linear_filter_hidden;
 } RecompLauncherCGameInfo;
+/* RecompLauncherCGameInfo carries linear_filter_hidden. */
+#define RECOMP_LAUNCHER_HAS_LINEAR_FILTER_HIDDEN 1
 #define RECOMP_LAUNCHER_HAS_ARTWORK_GALLERY 1
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
@@ -2457,9 +2453,10 @@ typedef struct RecompLauncherCGameInfo {
 /* Hosts #ifdef on this to stay source-compatible with older recomp-ui that
  * lacks Settings.internal_resolution and the GameInfo vocabulary. */
 #define RECOMP_LAUNCHER_HAS_INTERNAL_RESOLUTION 1
-#define RECOMP_LAUNCHER_HAS_DYNAMIC_RESOLUTION 1
+/* (RECOMP_LAUNCHER_HAS_DYNAMIC_RESOLUTION and RECOMP_LAUNCHER_HAS_QUALITY_PRESETS
+ * are gone with the fields they announced; hosts that tested them simply
+ * stop compiling that code.) */
 #define RECOMP_LAUNCHER_HAS_RENDER_PIPELINE 1
-#define RECOMP_LAUNCHER_HAS_QUALITY_PRESETS 1
 #define RECOMP_LAUNCHER_HAS_NETPLAY_MODE_POLICY 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1

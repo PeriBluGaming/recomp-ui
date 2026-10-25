@@ -3899,7 +3899,6 @@ bool any_deep_display(const LauncherModel* m) {
            m->has_scanlines ||
            m->has_fmv_filter ||
            m->has_frame_interp || m->has_skip_fmv ||
-           m->has_geometry_precision ||
            m->has_rewind_depth;
            /* has_turbo_loads is intentionally absent: it draws no row (below).
             * has_vsync no longer forces the deep surface: the legacy branch
@@ -4003,66 +4002,28 @@ void draw_shader_row(LauncherModel* m, const LauncherTheme& th, float col_w = 0.
     ImGui::EndDisabled();
 }
 
-/* Graphics preset (GameInfo.quality_*): Low / Medium / High / Ultra set every
- * quality row at once; changing any of those rows afterwards turns it into
- * Custom (launcher_model_quality_track), which the host never overrides.
- * Re-detect runs the host's hardware detection again. */
-void draw_quality_preset_row(LauncherModel* m, const LauncherTheme& th) {
-    if (!launcher_model_quality_offered(m)) return;
-    launcher_model_quality_track(m);
-    const int cur = m->s.quality_preset;
-    const float gap = px(th.spacing_sm);
-    const float btn_w = px(92);
-    float combo_w = px(SETTINGS_CTRL_W) - btn_w - gap;
-    if (combo_w < px(110)) combo_w = px(110);
-    // Reserve both controls after enforcing the combo minimum. Otherwise
-    // Re-detect spills beyond the settings column's clip rectangle.
-    row_label_right("Graphics preset", th, combo_w + gap + btn_w);
-    ImGui::SetNextItemWidth(combo_w);
-    if (ImGui::BeginCombo("##quality_preset",
-                          ui_text(cur ? launcher_model_quality_label(cur) : "Detected"))) {
-        for (int p = 1; p <= 4; ++p) {
-            if (!(m->quality_offered_mask & (1 << (p - 1)))) continue;
-            std::string label = ui_text(launcher_model_quality_label(p));
-            if (p == m->quality_detected) label += std::string(" (") + ui_text("detected") + ")";
-            if (ImGui::Selectable(label.c_str(), cur == p))
-                launcher_model_quality_select(m, p);
-        }
-        if (cur == 5)
-            ImGui::Selectable(ui_text("Custom"), true, ImGuiSelectableFlags_Disabled);
-        ImGui::EndCombo();
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-        ImGui::SetTooltip("%s", ui_text(
-            "Sets every graphics option below for your hardware.\n"
-            "Change any of them and the preset becomes Custom;\n"
-            "your choices are then kept until you pick a preset again.\n"
-            "Dynamic resolution still steps down if a frame runs late."));
-    ImGui::SameLine(0, gap);
-    ImGui::BeginDisabled(m->quality_redetect == NULL);
-    if (ImGui::Button(ui_text("Re-detect"), ImVec2(btn_w, 0)))
-        launcher_model_quality_redetect(m);
+/* The VSync row while an enabled mod presents with driver vsync off
+ * (launcher_model_vsync_forced_off_by): the control is shown disabled at Off,
+ * with one line saying which mod owns it, rather than offering a choice that
+ * would not apply. The saved choice is untouched and returns with the mod off.
+ * Returns true when it drew the overridden row. */
+bool draw_vsync_overridden_row(LauncherModel* m, const LauncherTheme& th, float w) {
+    const char* by = launcher_model_vsync_forced_off_by(m);
+    if (!by) return false;
+    row_label_right("VSync", th, w);
+    ImGui::BeginDisabled();
+    ImGui::SetNextItemWidth(w);
+    if (ImGui::BeginCombo("##vsync_overridden", ui_text("Off"))) ImGui::EndCombo();
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", ui_text("Detect this computer again and apply the preset it suits."));
-    if (m->quality_summary && *m->quality_summary) {
-        ImGui::PushTextWrapPos(0.0f);
-        if (m->quality_detected >= 1 && m->quality_detected <= 4)
-            ImGui::TextColored(col(th.text_muted), "%s %s: %s", ui_text("Detected"),
-                               ui_text(launcher_model_quality_label(m->quality_detected)),
-                               m->quality_summary);
-        else
-            ImGui::TextColored(col(th.text_muted), "%s", m->quality_summary);
-        if (cur == 5 && m->s.quality_base >= 1 && m->s.quality_base <= 4)
-            ImGui::TextColored(col(th.text_muted), "%s %s", ui_text("Custom, based on"),
-                               ui_text(launcher_model_quality_label(m->s.quality_base)));
-        ImGui::PopTextWrapPos();
-    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(col(th.text_muted), "%s %s",
+                       ui_text("Off while this mod is on:"), by);
+    ImGui::PopTextWrapPos();
+    return true;
 }
 
 void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("DISPLAY");
-    draw_quality_preset_row(m, th);
 
     if (!any_deep_display(m)) {
         // ---- legacy minimal surface (SNES/NES etc.) ---------------------------
@@ -4121,7 +4082,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             if (ImGui::Button(ui_text(launcher_model_scaling_filter_label(m)),
                               ImVec2(px(180), px(30))))
                 launcher_model_cycle_scaling_filter(m);
-        } else {
+        } else if (!m->linear_filter_hidden) {
             row_label_right("Linear filtering", th, cb);
             bool filter = m->s.linear_filter != 0;
             if (ImGui::Checkbox("##filter", &filter))
@@ -4149,7 +4110,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         // On/Off checkbox rather than the deep surface's tri-state dropdown:
         // legacy-surface hosts map this onto a boolean renderer flag, so
         // offering "Adaptive" here would promise what they cannot deliver.
-        if (m->has_vsync) {
+        if (m->has_vsync && !draw_vsync_overridden_row(m, th, px(SETTINGS_CTRL_W))) {
             row_label_right("VSync", th, cb);
             bool vs = m->s.vsync != RECOMP_LAUNCHER_VSYNC_OFF;
             if (ImGui::Checkbox("##vsync", &vs))
@@ -4268,6 +4229,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 "Cost grows with the square of the scale.\n"
                 "Match display uses your monitor's full resolution.\n"
                 "Applies when the game starts.\n"
+                "Auto renders at your monitor's resolution and steps down\n"
+                "when the game would miss frames, then back up.\n"
                 "Netplay: your view only; other players are unaffected."));
         }
         /* The host's words (for example the GPU clamp that applies here),
@@ -4291,31 +4254,6 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 "Offline: full software/GL supersampling.\n"
                 "Netplay (OpenGL): present quality via GPU FBO;\n"
                 "CPU VRAM authority stays at 1x for snaps/digests.");
-        }
-    }
-
-    if (m->has_dynamic_resolution && m->s.renderer == 1 &&
-        m->s.internal_resolution != 1) {
-        row_label_right("Dynamic resolution", th, px(SETTINGS_CTRL_W));
-        bool enabled = m->s.dynamic_resolution != 0;
-        if (ImGui::Checkbox("##dynamic_resolution", &enabled))
-            m->s.dynamic_resolution = enabled ? 1 : 0;
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-            ImGui::SetTooltip("Steps down when the game misses frame budgets, then returns to full resolution when there is room.");
-        if (enabled) {
-            static const int floors[] = {1, 720, 1080, 1440};
-            static const char* labels[] = {"Native", "720p", "1080p", "1440p"};
-            int cur = 1;
-            for (int i = 0; i < 4; ++i)
-                if (m->s.dynamic_resolution_min == floors[i]) cur = i;
-            row_label_right("Lowest resolution", th, px(SETTINGS_CTRL_W));
-            ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
-            if (ImGui::BeginCombo("##dynamic_resolution_min", labels[cur])) {
-                for (int i = 0; i < 4; ++i)
-                    if (ImGui::Selectable(labels[i], cur == i))
-                        m->s.dynamic_resolution_min = floors[i];
-                ImGui::EndCombo();
-            }
         }
     }
 
@@ -4346,7 +4284,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label_right("Texture filtering", th, px(SETTINGS_CTRL_W));
         if (ImGui::Button(ui_text(launcher_model_texture_filter_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_toggle_texture_filter(m);
-    } else {
+    } else if (!m->linear_filter_hidden) {
         row_label_right("Linear filtering", th, cb);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
@@ -4404,30 +4342,9 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 
     draw_shader_row(m, th);
 
-    if (m->has_geometry_precision) {
-        // Geometry correction deliberately draws NO row. It moves vertices, and
-        // the runtime can only recover the sub-pixel original for ~5% of them
-        // (93% of lookups are ambiguous), so a corrected triangle meets an
-        // uncorrected neighbour and their shared edge splits open. Measured on
-        // Ape Escape; see psxrecomp ENHANCEMENTS.md G1.8/G1.9. The setting stays
-        // in the ABI and remains readable from game.toml/settings.toml so the
-        // work is still testable, exactly as has_turbo_loads/Settings.turbo_loads
-        // stayed after their row was dropped — it simply has no control.
-        //
-        // Perspective textures are unaffected by that problem: they only change
-        // UV interpolation inside a polygon whose provenance is already proven,
-        // so no vertex moves and adjacent polygons cannot disagree about an edge.
-        row_label_right("Perspective textures", th, cb);
-        bool persp = m->s.perspective_texturing != 0;
-        if (ImGui::Checkbox("##persptex", &persp))
-            launcher_model_toggle_perspective_texturing(m);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Interpolates textures with perspective, which "
-                              "stops large floors and walls from warping as the "
-                              "camera moves.\n\nApplied only to polygons the "
-                              "runtime can prove came from the 3D pipeline, so "
-                              "2D art and menus are left alone.");
-    }
+    /* No Perspective textures (or geometry correction) row: psxrecomp's PGXP
+     * Precision mod owns both on the Mods page, and GameInfo
+     * .has_geometry_precision is ignored. */
 
     if (m->has_screen_kind) {
         row_label_right("Screen model", th, px(220));
@@ -4477,7 +4394,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 
     // VSync sits with frame interpolation because both decide how a finished
     // frame reaches the panel, not how it is drawn.
-    if (m->has_vsync) {
+    if (m->has_vsync && !draw_vsync_overridden_row(m, th, px(SETTINGS_CTRL_W))) {
         row_label_right("VSync", th, px(SETTINGS_CTRL_W));
         ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
         if (ImGui::BeginCombo("##vsync_mode",

@@ -437,7 +437,6 @@ void launcher_model_init(LauncherModel* m,
         m->has_vsync            = game->has_vsync != 0;
         m->has_skip_fmv         = game->has_skip_fmv != 0;
         m->has_turbo_loads      = game->has_turbo_loads != 0;
-        m->has_geometry_precision = game->has_geometry_precision != 0;
         // game->has_fullscreen_toggle is deliberately NOT read: the Fullscreen
         // row is universal (drawn for every console) — see recomp_launcher.h.
         m->has_bios             = game->has_bios != 0;
@@ -582,15 +581,8 @@ void launcher_model_init(LauncherModel* m,
         m->internal_resolution_values = game->internal_resolution_values;
         m->num_internal_resolutions   = game->num_internal_resolutions;
         m->internal_resolution_note   = game->internal_resolution_note;
-        m->has_dynamic_resolution      = game->has_dynamic_resolution != 0;
         m->has_render_pipeline         = game->has_render_pipeline != 0;
-        m->quality_offered_mask        = game->quality_offered_mask;
-        m->quality_detected            = game->quality_detected;
-        m->quality_summary             = game->quality_summary;
-        m->quality_reason              = game->quality_reason;
-        m->quality_apply               = game->quality_apply;
-        m->quality_redetect            = game->quality_redetect;
-        m->quality_snapshot_valid      = false;
+        m->linear_filter_hidden        = game->linear_filter_hidden != 0;
         m->renderer_note        = game->renderer_note;
         m->hide_rebind          = game->hide_rebind != 0;
         m->has_mouse_controls   = game->has_mouse_controls != 0;
@@ -2164,6 +2156,26 @@ void launcher_model_set_vsync(LauncherModel* m, int value) {
     m->s.vsync = value;
 }
 
+/* The enabled feature that overrides the VSync row, as the mod provider
+ * reports it. The saved Settings.vsync is left alone: it applies again once
+ * that feature is off. */
+const char* launcher_model_vsync_forced_off_by(const LauncherModel* m) {
+    static char name[128];
+    if (!m || !m->mods || !m->mods->feature_count || !m->mods->feature_get)
+        return NULL;
+    const int n = m->mods->feature_count(m->mods->ctx);
+    for (int i = 0; i < n; ++i) {
+        RecompLauncherCModFeature f;
+        memset(&f, 0, sizeof f);
+        if (!m->mods->feature_get(m->mods->ctx, i, &f) || !f.enabled ||
+            !f.forces_vsync_off)
+            continue;
+        snprintf(name, sizeof name, "%s", f.name[0] ? f.name : f.id);
+        return name;
+    }
+    return NULL;
+}
+
 const char* launcher_model_renderer_label(const LauncherModel* m) {
     if (m->renderer_ids)
         return launcher_model_renderer_label_at(m, m->s.renderer);
@@ -2186,71 +2198,6 @@ void launcher_model_cycle_supersampling(LauncherModel* m) {
 
 bool launcher_model_render_pipeline_offered(const LauncherModel* m) {
     return m && m->has_render_pipeline && m->s.renderer == 1;
-}
-
-bool launcher_model_quality_offered(const LauncherModel* m) {
-    return m && (m->quality_offered_mask & 0xF) != 0 && m->quality_apply != NULL;
-}
-
-const char* launcher_model_quality_label(int preset) {
-    static const char* const k[] = {"", "Low", "Medium", "High", "Ultra", "Custom"};
-    return (preset >= 0 && preset <= 5) ? k[preset] : "";
-}
-
-/* The Settings fields a preset may set. A field the host's preset leaves
- * alone simply keeps its value in the snapshot, so comparing all of them is
- * exact. */
-static bool quality_fields_equal(const RecompLauncherCSettings* a,
-                                 const RecompLauncherCSettings* b) {
-    return a->internal_resolution == b->internal_resolution &&
-           a->supersampling == b->supersampling &&
-           a->dynamic_resolution == b->dynamic_resolution &&
-           a->dynamic_resolution_min == b->dynamic_resolution_min &&
-           a->render_thread == b->render_thread &&
-           a->present_thread == b->present_thread &&
-           a->frame_generation == b->frame_generation &&
-           a->antialiasing == b->antialiasing &&
-           a->texture_filter == b->texture_filter &&
-           a->fmv_filter == b->fmv_filter &&
-           a->geometry_correction == b->geometry_correction &&
-           a->perspective_texturing == b->perspective_texturing &&
-           a->frame_interp == b->frame_interp &&
-           a->frame_interp_fps == b->frame_interp_fps;
-}
-
-void launcher_model_quality_select(LauncherModel* m, int preset) {
-    if (!launcher_model_quality_offered(m) || preset < 1 || preset > 4) return;
-    if (!(m->quality_offered_mask & (1 << (preset - 1)))) return;
-    m->quality_apply(preset, &m->s);
-    m->s.quality_preset = preset;
-    m->s.quality_base = preset;
-    m->quality_snapshot = m->s;
-    m->quality_snapshot_valid = true;
-}
-
-void launcher_model_quality_redetect(LauncherModel* m) {
-    if (!launcher_model_quality_offered(m) || !m->quality_redetect) return;
-    const int p = m->quality_redetect();
-    if (p >= 1 && p <= 4) {
-        m->quality_detected = p;
-        launcher_model_quality_select(m, p);
-    }
-}
-
-void launcher_model_quality_track(LauncherModel* m) {
-    if (!launcher_model_quality_offered(m)) return;
-    const int q = m->s.quality_preset;
-    if (q < 1 || q > 4) return;
-    if (!m->quality_snapshot_valid) {
-        /* The host seeded the settings with this preset in force. */
-        m->quality_snapshot = m->s;
-        m->quality_snapshot_valid = true;
-        return;
-    }
-    if (!quality_fields_equal(&m->s, &m->quality_snapshot)) {
-        m->s.quality_base = q;
-        m->s.quality_preset = 5;
-    }
 }
 
 bool launcher_model_render_pipeline_children_enabled(const LauncherModel* m) {
@@ -2396,25 +2343,6 @@ void launcher_model_set_shader_path(LauncherModel* m, const char* path) {
 
 void launcher_model_clear_shader_path(LauncherModel* m) {
     launcher_model_set_shader_path(m, "");
-}
-
-void launcher_model_toggle_geometry_correction(LauncherModel* m) {
-    m->s.geometry_correction = !m->s.geometry_correction;
-}
-
-void launcher_model_toggle_perspective_texturing(LauncherModel* m) {
-    m->s.perspective_texturing = !m->s.perspective_texturing;
-}
-
-/* Sub-pixel vertices are only observable in the supersampled mirror: at 1x the
- * corrected position rounds back to the pixel it came from. Say so in the UI
- * rather than letting the row look broken when someone ticks it at native res. */
-bool launcher_model_geometry_correction_inert(const LauncherModel* m) {
-    /* With an internal-resolution vocabulary the native entry is value 1
-     * (the documented convention); the legacy cycle keeps its 1x test. */
-    if (launcher_model_internal_resolution_offered(m))
-        return m->s.geometry_correction && m->s.internal_resolution == 1;
-    return m->s.geometry_correction && m->s.supersampling < 2;
 }
 
 // Screen-model vocabulary: the active SystemProfile's own set when it has one
