@@ -1,5 +1,6 @@
 #include "launcher_artwork.h"
 #include <cassert>
+#include <fstream>
 #include <iostream>
 using namespace launcher_artwork;
 int main(int argc,char** argv) {
@@ -16,35 +17,22 @@ int main(int argc,char** argv) {
         std::ofstream(standard/"manual.pdf")<<"%PDF-fixture";
         auto c=scan(home,serial);assert(c.images.size()==3);
         assert(rank(c.images[0])==0 && rank(c.images[1])==1 && rank(c.images[2])==2);
-        const auto custom=qa/fs::u8path(u8"Other covers \u00c4 \u65e5\u672c folder")/serial;
-        fs::create_directories(custom);
-        for(int i=0;i<40;++i)std::ofstream(custom/(std::to_string(i)+".png"))<<"fixture";
-        assert(select_folder(home,serial,custom));
-        assert(folder(home,serial)==fs::absolute(custom).lexically_normal());
-        assert(scan(home,serial).images.size()==40); // no old 32-image truncation
-        assert(!select_folder(home,serial,custom/"missing"));
-        assert(scan(home,serial).images.size()==40); // invalid choice preserves saved path
         assert(fs::file_size(standard/"front.png")==7);
         assert(fs::file_size(standard/"manual.pdf")==12); // existing documents untouched
     }
-    for(const auto& serial:regions)assert(scan(home,serial).images.size()==40);
-    const auto empty=qa/"empty";fs::create_directories(empty);
-    assert(select_folder(home,regions[0],empty));assert(scan(home,regions[0]).images.empty());
-    assert(scan(home,regions[1]).images.size()==40 && scan(home,regions[2]).images.size()==40);
-    fs::remove(empty);assert(scan(home,regions[0]).images.empty());
-    assert(!select_folder(home,"../bad",qa));assert(scan(home,"../bad").images.empty());
+    // Unicode serial folders and more than 32 images (no old truncation).
+    const auto many=home/"SLPS-01144";
+    for(int i=0;i<40;++i)std::ofstream(many/fs::u8path(std::to_string(i)+u8" 日本.png"))<<"fixture";
+    assert(scan(home,"SLPS-01144").images.size()==43);
+    // A missing folder or an unsafe serial is simply empty.
+    assert(scan(home,"SLUS-00000").images.empty());
+    assert(scan(home,"../bad").images.empty() && folder(home,"../bad").empty());
     assert(supported("T-1234G") && supported("MK-81000") && !supported("") &&
            !supported("..") && !supported("a/b") && !supported(std::string(65,'A')));
-    // Internal folders are relative, so the preference survives moving the portable tree.
-    assert(select_folder(home,regions[0],home/regions[1]));
+    // Folders are found relative to the artwork root, so a moved portable tree keeps its covers.
     const auto moved=qa/"moved portable";fs::rename(home.parent_path(),moved);
     assert(scan(moved/"artwork",regions[0]).images.size()==3);
-    // External choices remain absolute, with independent state per region.
-    assert(scan(moved/"artwork",regions[1]).images.size()==40);
-    std::ofstream(moved/"artwork"/regions[2]/"cover-folder.txt",std::ios::binary)<<std::string(65537,'x');
-    assert(scan(moved/"artwork",regions[2]).images.size()==3);
     assert(step(0,3,-1)==2 && step(2,3,1)==0 && step(0,0,1)==0);
     auto fit_size=fit(800,400,200,200);assert(fit_size.w==200 && fit_size.h==100);
-    assert(fs::file_size(moved/"artwork"/regions[0]/"front.png")==7);
-    std::cout<<"PASS: regional folders, persistence, relocation, Unicode, empty/missing/invalid, 40 images, navigation and aspect ratio; no image writes.\n";
+    std::cout<<"PASS: per-serial folders, relocation, Unicode, missing/unsafe serials, 43 images, navigation and aspect ratio; no writes.\n";
 }

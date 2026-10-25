@@ -2,12 +2,11 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
-// Optional read-only cover images, one folder per disc serial. Only an explicit
-// folder selection writes anything: that disc's cover-folder.txt preference.
+// Optional read-only cover images, one folder per disc serial
+// (<artwork root>/<serial>/). The launcher never writes into these folders.
 namespace launcher_artwork {
 namespace fs = std::filesystem;
 struct Catalog { std::vector<fs::path> images; };
@@ -34,28 +33,7 @@ inline fs::path root(fs::path executable_directory) {
 }
 inline fs::path folder(const fs::path& home,const std::string& serial) {
     if(!supported(serial))return {};
-    const auto base=fs::absolute(home/serial).lexically_normal();
-    std::ifstream in(base/"cover-folder.txt",std::ios::binary);
-    std::string saved(65537,'\0');in.read(saved.data(),saved.size());saved.resize(size_t(in.gcount()));
-    if(saved.empty() || saved.size()>65536 || saved.find('\0')!=std::string::npos)return base;
-    auto selected=fs::u8path(saved);
-    return (selected.is_absolute()?selected:base/selected).lexically_normal();
-}
-inline bool select_folder(const fs::path& home,const std::string& serial,const fs::path& path) {
-    if(!supported(serial))return false;
-    try {
-        if(!fs::is_directory(path))return false;
-        const auto base=fs::absolute(home/serial).lexically_normal();
-        if(fs::is_symlink(base) || fs::is_symlink(base/"cover-folder.txt"))return false;
-        const auto chosen=fs::absolute(path).lexically_normal();
-        fs::create_directories(base);
-        // Paths within the portable installation follow it when moved.
-        const auto inside=chosen.lexically_relative(fs::absolute(home).parent_path());
-        const auto saved=(!inside.empty() && *inside.begin()!=fs::path(".."))
-            ?chosen.lexically_relative(base):chosen;
-        std::ofstream out(base/"cover-folder.txt",std::ios::binary|std::ios::trunc);
-        out<<saved.u8string();out.flush();return bool(out);
-    }catch(...){return false;}
+    return fs::absolute(home/serial).lexically_normal();
 }
 inline int rank(const fs::path& p) {
     auto name=lower(p.filename().u8string());

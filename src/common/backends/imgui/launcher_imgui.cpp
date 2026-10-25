@@ -363,14 +363,14 @@ bool download_icon_button(const char* id, float side, bool enabled,
 
 LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard;
 struct ArtworkGallery {
-    std::string serial, error;
+    std::string serial;
     launcher_artwork::Catalog catalog;
     std::vector<LauncherTexture> textures;
     size_t index=0;
     bool enlarged=false;
     void clear() {
         for(auto& t:textures)launcher_texture_free(&t);
-        textures.clear();catalog={};serial.clear();error.clear();index=0;enlarged=false;
+        textures.clear();catalog={};serial.clear();index=0;enlarged=false;
     }
 } g_artwork;
 
@@ -2306,30 +2306,6 @@ void draw_artwork_gallery(LauncherModel* m,float height,float width) {
         const LauncherTexture empty{};hero_boxart_centered(empty,height/px(1.0f),width);
         ImGui::TextDisabled("%s",ui_text("No readable cover images in this folder."));
     }
-    const bool verified=m->profile && m->profile->verify.mode==1 &&
-        launcher_artwork::supported(serial) && launcher_model_can_open_mods(m);
-    ImGui::BeginDisabled(!verified);
-    if (ImGui::Button(ui_text("Browse Covers"))) {
-        const auto home = artwork_home(m);
-        const auto directory = home / serial;
-        std::error_code ec;
-        std::filesystem::create_directories(directory, ec);
-        g_artwork.error.clear();
-        PickRequest req;
-        req.mode = PickMode::Folder;
-        req.title = ui_text("Browse Covers");
-        if (!ec) req.start_path = directory.u8string();
-        req.on_pick = [home, serial](const char* selected) {
-            if (!selected || !selected[0]) return;
-            if (launcher_artwork::select_folder(home, serial, std::filesystem::u8path(selected)))
-                g_artwork.clear();  // the next frame reloads this disc's saved folder
-            else
-                g_artwork.error = ui_text("The folder is invalid or its selection could not be saved.");
-        };
-        ui_pick(m, std::move(req));
-    }
-    ImGui::EndDisabled();
-    if(!g_artwork.error.empty())ImGui::TextWrapped("%s",g_artwork.error.c_str());
 }
 
 void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = false) {
@@ -2350,7 +2326,6 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         // + Change ROM, plus the SAVES block when this game has battery SRAM.
         float reserve = px(198.0f);
         if(disc_verdict)reserve+=px(54.0f);
-        reserve+=ImGui::GetFrameHeightWithSpacing();
         if (disc_verdict) reserve += px(120.0f);          // taller: icon+headline + tracks row
         // Disc Selection label + combo + spacing, for a multi-image title.
         if (launcher_model_disc_count(m) > 1) reserve += px(62.0f);
@@ -2874,7 +2849,6 @@ static int dash_card_columns(float availw, float gap, float cardw, int count) {
 }
 
 static void draw_quick_mods(LauncherModel* m,const LauncherTheme& th);
-static void draw_quick_settings(LauncherModel* m,const LauncherTheme& th);
 
 void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
@@ -2886,7 +2860,7 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
         const int slots = (prof->save.slots > 0 && prof->save.slots <= 2) ? prof->save.slots : 2;
         const float gap = px(th->spacing_sm);
         const float avail = ImGui::GetContentRegionAvail().x;
-        const int cards=slots+(m->dashboard_quick_controls?2:0);
+        const int cards=slots+(m->dashboard_quick_controls?1:0);
         const float cw = dash_card_width(avail, gap, cards);
         const int cols = dash_card_columns(avail, gap, cw, cards);
         // Multitap fill-height: slot cards take the reserved band under the
@@ -2907,8 +2881,7 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
                 // inner width fills it without applying DPI scaling twice.
                 if (begin_panel(pid, 0, quick || do_fill, quick?false:do_fill)) {
                     if(slot<slots)draw_memcard_slot(m,*th,slot);
-                    else if(slot==slots)draw_quick_mods(m,*th);
-                    else draw_quick_settings(m,*th);
+                    else draw_quick_mods(m,*th);
                 }
                 end_panel();
             end_container();
@@ -12654,39 +12627,6 @@ static void draw_quick_mods(LauncherModel* m,const LauncherTheme& th) {
         }
     }
     ImGui::EndChild();ImGui::EndDisabled();
-    (void)th;
-}
-
-static void draw_quick_settings(LauncherModel* m,const LauncherTheme& th) {
-    eyebrow("Quick Settings");
-    if(m->has_vsync) {
-        bool on=m->s.vsync!=RECOMP_LAUNCHER_VSYNC_OFF;
-        if(ImGui::Checkbox(ui_text("VSync"),&on))
-            launcher_model_set_vsync(m,on?RECOMP_LAUNCHER_VSYNC_ON:RECOMP_LAUNCHER_VSYNC_OFF);
-    }
-    if(launcher_model_internal_resolution_offered(m)) {
-        ImGui::TextUnformatted(ui_text("Internal resolution"));
-        ImGui::SetNextItemWidth(-1);
-        internal_resolution_combo(m,"##quick_resolution");
-    }
-    ImGui::TextUnformatted(ui_text("Screen Mode"));
-    ImGui::SetNextItemWidth(-1);
-    fullscreen_combo(m,"##quick_screen_mode");
-    bool fullscreen=m->s.fullscreen!=0;
-    if(ImGui::Checkbox(ui_text("Fullscreen"),&fullscreen))launcher_model_toggle_fullscreen(m);
-    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",ui_text("Uses the same Off / Borderless / Exclusive setting. Changes apply when the game starts."));
-    if(m->has_screen_kind) {
-        ImGui::TextUnformatted(ui_text("Screen Model"));
-        ImGui::SetNextItemWidth(-1);
-        if(ImGui::BeginCombo("##quick_screen_model",ui_text(launcher_model_screen_kind_label(m)))) {
-            for(int i=0;i<launcher_model_screen_kind_count(m);++i) {
-                const bool selected=m->s.screen_kind==i;
-                if(ImGui::Selectable(ui_text(launcher_model_screen_kind_name(m,i)),selected))launcher_model_set_screen_kind(m,i);
-                if(selected)ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-    }
     (void)th;
 }
 

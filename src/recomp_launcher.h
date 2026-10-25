@@ -2440,8 +2440,8 @@ typedef struct RecompLauncherCGameInfo {
      * and ignores the remembered one. artwork_root: UTF-8 folder holding one
      * <disc serial>/ cover folder per disc; NULL = <launcher dir>/artwork.
      * Borrowed for the launcher's lifetime, never persisted.
-     * dashboard_quick_controls: show Quick Mods and Quick Settings cards next
-     * to the memory cards. All zero keeps the existing launcher. Appended for
+     * dashboard_quick_controls: show the Quick Mods card next to the memory
+     * cards. All zero keeps the existing launcher. Appended for
      * ABI stability. */
     int                disc_selection_locked;
     const char*        artwork_root;

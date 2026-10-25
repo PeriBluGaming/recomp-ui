@@ -333,8 +333,8 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME recomp-ui-launcher-mod-button COMMAND recomp-ui-launcher-mod-button-test)
 
-    # Cover folders: per-disc preference, relocation, Unicode paths, invalid
-    # and empty folders, ordering and aspect fit. Writes only under the test dir.
+    # Cover folders: per-serial folders, relocation, Unicode paths, missing and
+    # unsafe serials, ordering and aspect fit. Writes only under the test dir.
     add_executable(recomp-ui-launcher-artwork-folder-test tests/launcher_artwork_folder_test.cpp)
     target_include_directories(recomp-ui-launcher-artwork-folder-test PRIVATE src/common)
     target_compile_features(recomp-ui-launcher-artwork-folder-test PRIVATE cxx_std_17)
